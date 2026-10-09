@@ -2,55 +2,67 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Shield, Eye, Video, Monitor, AlertTriangle, CheckCircle, RotateCw } from 'lucide-react';
+import { Shield, Eye, Video, Monitor, AlertTriangle, CheckCircle, RotateCw, User, ShieldAlert } from 'lucide-react';
 
-/* ─── Bone Connection Pairs for Humanoid Skeleton ─── */
-const BONE_CONNECTIONS = [
+/* ─── Generic Bone Connections (Works with both standard Humanoid and Mixamo rigs) ─── */
+const BONE_PAIRS = [
   // Head & Spine
-  ['mixamorig:Head', 'mixamorig:Neck'],
-  ['mixamorig:Neck', 'mixamorig:Spine2'],
-  ['mixamorig:Spine2', 'mixamorig:Spine1'],
-  ['mixamorig:Spine1', 'mixamorig:Spine'],
-  ['mixamorig:Spine', 'mixamorig:Hips'],
+  ['Head', 'Neck'],
+  ['Neck', 'Spine2'],
+  ['Spine2', 'Spine1'],
+  ['Spine1', 'Spine'],
+  ['Spine', 'Hips'],
 
   // Left Arm
-  ['mixamorig:Neck', 'mixamorig:LeftShoulder'],
-  ['mixamorig:LeftShoulder', 'mixamorig:LeftArm'],
-  ['mixamorig:LeftArm', 'mixamorig:LeftForeArm'],
-  ['mixamorig:LeftForeArm', 'mixamorig:LeftHand'],
+  ['Neck', 'LeftShoulder'],
+  ['LeftShoulder', 'LeftArm'],
+  ['LeftArm', 'LeftForeArm'],
+  ['LeftForeArm', 'LeftHand'],
 
   // Right Arm
-  ['mixamorig:Neck', 'mixamorig:RightShoulder'],
-  ['mixamorig:RightShoulder', 'mixamorig:RightArm'],
-  ['mixamorig:RightArm', 'mixamorig:RightForeArm'],
-  ['mixamorig:RightForeArm', 'mixamorig:RightHand'],
+  ['Neck', 'RightShoulder'],
+  ['RightShoulder', 'RightArm'],
+  ['RightArm', 'RightForeArm'],
+  ['RightForeArm', 'RightHand'],
 
   // Left Leg
-  ['mixamorig:Hips', 'mixamorig:LeftUpLeg'],
-  ['mixamorig:LeftUpLeg', 'mixamorig:LeftLeg'],
-  ['mixamorig:LeftLeg', 'mixamorig:LeftFoot'],
+  ['Hips', 'LeftUpLeg'],
+  ['LeftUpLeg', 'LeftLeg'],
+  ['LeftLeg', 'LeftFoot'],
 
   // Right Leg
-  ['mixamorig:Hips', 'mixamorig:RightUpLeg'],
-  ['mixamorig:RightUpLeg', 'mixamorig:RightLeg'],
-  ['mixamorig:RightLeg', 'mixamorig:RightFoot'],
+  ['Hips', 'RightUpLeg'],
+  ['RightUpLeg', 'RightLeg'],
+  ['RightLeg', 'RightFoot'],
 ];
 
-const KEY_JOINTS = [
-  'mixamorig:Head',
-  'mixamorig:Neck',
-  'mixamorig:LeftArm',
-  'mixamorig:LeftForeArm',
-  'mixamorig:LeftHand',
-  'mixamorig:RightArm',
-  'mixamorig:RightForeArm',
-  'mixamorig:RightHand',
-  'mixamorig:Hips',
-  'mixamorig:LeftLeg',
-  'mixamorig:LeftFoot',
-  'mixamorig:RightLeg',
-  'mixamorig:RightFoot',
+const KEY_JOINT_NAMES = [
+  'Head',
+  'Neck',
+  'LeftArm',
+  'LeftForeArm',
+  'LeftHand',
+  'RightArm',
+  'RightForeArm',
+  'RightHand',
+  'Hips',
+  'LeftLeg',
+  'LeftFoot',
+  'RightLeg',
+  'RightFoot',
 ];
+
+// Helper to look up bones under various naming schemes
+function getBone(bonesMap, name) {
+  if (!bonesMap) return null;
+  return (
+    bonesMap.get(name) ||
+    bonesMap.get(`mixamorig:${name}`) ||
+    bonesMap.get(`mixamorig_${name}`) ||
+    bonesMap.get(name.toLowerCase()) ||
+    null
+  );
+}
 
 export default function GtaSimulator({
   aimbotActive = true,
@@ -66,6 +78,7 @@ export default function GtaSimulator({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [viewMode, setViewMode] = useState('player'); // 'player' | 'obs' | 'pip'
+  const [modelType, setModelType] = useState('player'); // 'player' (normal player) | 'soldier' (tactical)
   const [autoRotate, setAutoRotate] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -90,12 +103,12 @@ export default function GtaSimulator({
     if (!container) return;
 
     const width = container.clientWidth || 460;
-    const height = container.clientHeight || 420;
+    const height = container.clientHeight || 430;
 
     // Scene
     const scene = new THREE.Scene();
-    scene.background = null; // transparent to show tactical gradient
-    scene.fog = new THREE.FogExp2(0x030816, 0.04);
+    scene.background = null;
+    scene.fog = new THREE.FogExp2(0x030816, 0.035);
 
     // Camera
     const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100);
@@ -115,33 +128,33 @@ export default function GtaSimulator({
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.15;
 
-    // Lights
-    const ambientLight = new THREE.AmbientLight(0x1e293b, 1.4);
+    // Lighting (Tactical Studio / Los Santos Night)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.6);
     scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight(0x38bdf8, 2.5);
-    keyLight.position.set(2, 4, 3);
+    const keyLight = new THREE.DirectionalLight(0x38bdf8, 2.4);
+    keyLight.position.set(2.5, 4, 3);
     scene.add(keyLight);
 
-    const rimLight = new THREE.DirectionalLight(0x00f0ff, 3.0);
+    const rimLight = new THREE.DirectionalLight(0x00f0ff, 3.2);
     rimLight.position.set(-2.5, 2.5, -2);
     scene.add(rimLight);
 
-    const softFill = new THREE.PointLight(0x0ea5e9, 1.2, 8);
-    softFill.position.set(0, 0.5, 2);
-    scene.add(softFill);
+    const fillLight = new THREE.PointLight(0x0ea5e9, 1.2, 8);
+    fillLight.position.set(0, 0.6, 2.2);
+    scene.add(fillLight);
 
-    // Tactical Ground Radar Grid
+    // Ground Radar Grid
     const gridGroup = new THREE.Group();
     const gridHelper = new THREE.GridHelper(6, 16, 0x00f0ff, 0x1e293b);
     gridHelper.position.y = 0;
-    gridHelper.material.opacity = 0.25;
+    gridHelper.material.opacity = 0.22;
     gridHelper.material.transparent = true;
     gridGroup.add(gridHelper);
 
-    // Concentric Radar Rings on Ground
+    // Ground Radar Concentric Rings
     for (const radius of [0.8, 1.6, 2.4]) {
-      const ringGeo = new THREE.RingGeometry(radius - 0.01, radius, 48);
+      const ringGeo = new THREE.RingGeometry(radius - 0.012, radius, 48);
       const ringMat = new THREE.MeshBasicMaterial({
         color: 0x00f0ff,
         side: THREE.DoubleSide,
@@ -159,62 +172,10 @@ export default function GtaSimulator({
     stateRef.current.camera = camera;
     stateRef.current.renderer = renderer;
 
-    // Load Soldier GLB
-    const loader = new GLTFLoader();
-    loader.load(
-      '/soldier.glb',
-      (gltf) => {
-        const model = gltf.scene;
-        model.scale.set(1.05, 1.05, 1.05);
-        model.position.set(0, 0, 0);
-
-        // Map bones by name
-        const bonesMap = new Map();
-        model.traverse((child) => {
-          if (child.isBone || child.type === 'Bone') {
-            bonesMap.set(child.name, child);
-          }
-          if (child.isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            // Enhance materials for tactical stealth look
-            if (child.material) {
-              child.material.roughness = 0.65;
-              child.material.metalness = 0.3;
-            }
-          }
-        });
-
-        scene.add(model);
-        stateRef.current.characterRoot = model;
-        stateRef.current.bonesMap = bonesMap;
-
-        // Animations: play 'Idle'
-        if (gltf.animations && gltf.animations.length > 0) {
-          const mixer = new THREE.AnimationMixer(model);
-          const idleClip = gltf.animations.find((clip) => clip.name === 'Idle') || gltf.animations[0];
-          if (idleClip) {
-            const action = mixer.clipAction(idleClip);
-            action.play();
-          }
-          stateRef.current.mixer = mixer;
-        }
-
-        setLoading(false);
-      },
-      undefined,
-      (err) => {
-        console.error('Failed to load soldier model:', err);
-        setLoadError('Failed to load 3D operative model');
-        setLoading(false);
-      }
-    );
-
-    // Resize Handler
     const handleResize = () => {
       if (!containerRef.current || !stateRef.current.renderer) return;
       const w = containerRef.current.clientWidth || 460;
-      const h = containerRef.current.clientHeight || 420;
+      const h = containerRef.current.clientHeight || 430;
 
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
@@ -238,7 +199,89 @@ export default function GtaSimulator({
     };
   }, []);
 
-  /* ─── Mouse Drag Rotation Handling ─── */
+  /* ─── Load Selected Character Model (Normal Player vs Tactical) ─── */
+  useEffect(() => {
+    const { scene } = stateRef.current;
+    if (!scene) return;
+
+    setLoading(true);
+    setLoadError(null);
+
+    // Clean up previous character
+    if (stateRef.current.characterRoot) {
+      scene.remove(stateRef.current.characterRoot);
+      stateRef.current.characterRoot = null;
+    }
+    if (stateRef.current.mixer) {
+      stateRef.current.mixer.stopAllAction();
+      stateRef.current.mixer = null;
+    }
+    stateRef.current.bonesMap.clear();
+
+    const modelPath = modelType === 'soldier' ? '/soldier.glb' : '/player.glb';
+    const loader = new GLTFLoader();
+
+    loader.load(
+      modelPath,
+      (gltf) => {
+        const model = gltf.scene;
+
+        // Auto-compute bounding box to normalize scale & floor position
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+
+        const targetHeight = 1.95;
+        const scaleFactor = targetHeight / (size.y || 1);
+        model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+        // Center on X/Z and align feet to floor (Y = 0)
+        model.position.x = -center.x * scaleFactor;
+        model.position.y = -box.min.y * scaleFactor;
+        model.position.z = -center.z * scaleFactor;
+
+        // Map bones and configure materials
+        const bonesMap = new Map();
+        model.traverse((child) => {
+          if (child.isBone || child.type === 'Bone') {
+            bonesMap.set(child.name, child);
+          }
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            if (child.material) {
+              child.material.roughness = 0.7;
+              child.material.metalness = 0.15;
+            }
+          }
+        });
+
+        scene.add(model);
+        stateRef.current.characterRoot = model;
+        stateRef.current.bonesMap = bonesMap;
+
+        // Play animations if model has them
+        if (gltf.animations && gltf.animations.length > 0) {
+          const mixer = new THREE.AnimationMixer(model);
+          const idleClip = gltf.animations.find((c) => c.name.toLowerCase().includes('idle')) || gltf.animations[0];
+          if (idleClip) {
+            mixer.clipAction(idleClip).play();
+          }
+          stateRef.current.mixer = mixer;
+        }
+
+        setLoading(false);
+      },
+      undefined,
+      (err) => {
+        console.error(`Failed to load ${modelPath}:`, err);
+        setLoadError('Failed to load 3D character model');
+        setLoading(false);
+      }
+    );
+  }, [modelType]);
+
+  /* ─── Drag to Rotate Handling ─── */
   const handleMouseDown = (e) => {
     setIsDragging(true);
     stateRef.current.lastMouseX = e.clientX;
@@ -273,17 +316,34 @@ export default function GtaSimulator({
     setIsDragging(false);
   };
 
-  /* ─── 3D & 2D Render Loop ─── */
+  /* ─── Main Render Loop (60/144 FPS) ─── */
   const renderFrame = useCallback(() => {
     const { scene, camera, renderer, mixer, clock, characterRoot, bonesMap } = stateRef.current;
     if (!scene || !camera || !renderer) return;
 
     const delta = clock.getDelta();
+    const elapsedTime = clock.getElapsedTime();
+
     if (mixer) {
       mixer.update(delta);
+    } else if (bonesMap.size > 0) {
+      // Natural procedural breathing & idle sway for models without skeletal animation
+      const spineBone = getBone(bonesMap, 'Spine1') || getBone(bonesMap, 'Spine');
+      const headBone = getBone(bonesMap, 'Head');
+      const hipsBone = getBone(bonesMap, 'Hips');
+
+      if (spineBone) {
+        spineBone.rotation.x = Math.sin(elapsedTime * 1.8) * 0.025;
+      }
+      if (headBone) {
+        headBone.rotation.y = Math.sin(elapsedTime * 0.9) * 0.035;
+      }
+      if (hipsBone) {
+        hipsBone.position.y = (hipsBone.userData.originalY || hipsBone.position.y) + Math.sin(elapsedTime * 1.8) * 0.003;
+      }
     }
 
-    // Auto rotate or smooth damping towards targetRotationY
+    // Auto-rotation & smooth damping
     if (autoRotate && !isDragging) {
       stateRef.current.targetRotationY += delta * 0.45;
     }
@@ -293,10 +353,10 @@ export default function GtaSimulator({
       characterRoot.rotation.y = stateRef.current.rotationY;
     }
 
-    // Render 3D Scene
+    // Render WebGL
     renderer.render(scene, camera);
 
-    // Update 2D Canvas Overlay
+    // Render 2D DirectX Cheat Overlay
     const overlay = canvasOverlayRef.current;
     if (overlay) {
       const ctx = overlay.getContext('2d');
@@ -305,38 +365,34 @@ export default function GtaSimulator({
 
       ctx.clearRect(0, 0, w, h);
 
-      // Determine if cheat overlay should be drawn based on View Mode & Streamproof State
-      // 1. In 'player' view: player always sees the cheat overlay.
-      // 2. In 'obs' view:
-      //    - If streamproofActive is TRUE: OBS captures 0% cheat overlay (100% CLEAN).
-      //    - If streamproofActive is FALSE: OBS leaks the cheat overlay (UNSAFE).
+      // Determine cheat rendering by viewMode & streamproof state
       const shouldDrawCheat = viewMode === 'player' || (viewMode === 'obs' && !streamproofActive) || viewMode === 'pip';
 
       if (shouldDrawCheat && bonesMap.size > 0) {
         drawCheatOverlay(ctx, w, h, bonesMap, camera);
       }
 
-      // Draw View Mode Watermarks
+      // Draw view mode watermarks & streamproof telemetry
       drawViewStatusWatermark(ctx, w, h);
     }
 
-    // Update PIP Mini Canvas if PIP mode is active
+    // Render PIP mini OBS monitor if active
     if (viewMode === 'pip' && pipCanvasRef.current && canvas3dRef.current) {
       const pip = pipCanvasRef.current;
       const pipCtx = pip.getContext('2d');
       pipCtx.clearRect(0, 0, pip.width, pip.height);
 
-      // Draw the clean 3D scene snapshot from the WebGL canvas
+      // Clean 3D game capture
       pipCtx.drawImage(canvas3dRef.current, 0, 0, pip.width, pip.height);
 
-      // If streamproof is OFF, OBS leaks the cheat overlay into the PIP preview too
+      // If streamproof is OFF, OBS leaks the cheat overlay
       if (!streamproofActive && canvasOverlayRef.current) {
         pipCtx.drawImage(canvasOverlayRef.current, 0, 0, pip.width, pip.height);
       }
     }
 
     stateRef.current.animFrameId = requestAnimationFrame(renderFrame);
-  }, [aimbotActive, espActive, streamproofActive, fov, viewMode, autoRotate, isDragging]);
+  }, [aimbotActive, espActive, streamproofActive, fov, viewMode, autoRotate, isDragging, modelType]);
 
   useEffect(() => {
     stateRef.current.animFrameId = requestAnimationFrame(renderFrame);
@@ -347,7 +403,7 @@ export default function GtaSimulator({
     };
   }, [renderFrame]);
 
-  /* ─── Helper: Project 3D vector to 2D screen coordinate ─── */
+  /* ─── 3D to 2D Screen Space Projection ─── */
   const projectBone = (boneObj, camera, width, height) => {
     if (!boneObj) return null;
     const v = new THREE.Vector3();
@@ -361,11 +417,11 @@ export default function GtaSimulator({
     };
   };
 
-  /* ─── Draw Authentic GTA V ESP Skeleton, Box & Aimbot ─── */
+  /* ─── Draw GTA V ESP Skeleton, Box & Aimbot ─── */
   const drawCheatOverlay = (ctx, w, h, bonesMap, camera) => {
     const center = { x: w / 2, y: h / 2 };
 
-    // 1. Draw FOV Ring (if aimbot is active)
+    // 1. Draw FOV Ring
     if (aimbotActive) {
       const radius = (fov / 150) * (Math.min(w, h) * 0.42);
       ctx.save();
@@ -376,7 +432,6 @@ export default function GtaSimulator({
       ctx.setLineDash([6, 6]);
       ctx.stroke();
 
-      // Subtle FOV inner pulse
       ctx.beginPath();
       ctx.arc(center.x, center.y, radius * 0.98, 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(0, 240, 255, 0.12)';
@@ -385,25 +440,47 @@ export default function GtaSimulator({
       ctx.restore();
     }
 
-    // 2. Compute screen coordinates of all skeleton bones
+    // 2. Project Bone Coordinates
     const boneScreenCoords = new Map();
     let minX = Infinity,
       maxX = -Infinity,
       minY = Infinity,
       maxY = -Infinity;
 
-    for (const [name, boneObj] of bonesMap.entries()) {
-      const pos = projectBone(boneObj, camera, w, h);
-      if (pos && pos.visible) {
-        boneScreenCoords.set(name, pos);
-        minX = Math.min(minX, pos.x);
-        maxX = Math.max(maxX, pos.x);
-        minY = Math.min(minY, pos.y);
-        maxY = Math.max(maxY, pos.y);
+    for (const [boneName] of KEY_JOINT_NAMES.map((name) => [name])) {
+      const boneObj = getBone(bonesMap, boneName);
+      if (boneObj) {
+        const pos = projectBone(boneObj, camera, w, h);
+        if (pos && pos.visible) {
+          boneScreenCoords.set(boneName, pos);
+          minX = Math.min(minX, pos.x);
+          maxX = Math.max(maxX, pos.x);
+          minY = Math.min(minY, pos.y);
+          maxY = Math.max(maxY, pos.y);
+        }
       }
     }
 
-    const headPos = boneScreenCoords.get('mixamorig:Head');
+    // Also project any additional bones for complete skeleton
+    for (const [nameA, nameB] of BONE_PAIRS) {
+      for (const name of [nameA, nameB]) {
+        if (!boneScreenCoords.has(name)) {
+          const boneObj = getBone(bonesMap, name);
+          if (boneObj) {
+            const pos = projectBone(boneObj, camera, w, h);
+            if (pos && pos.visible) {
+              boneScreenCoords.set(name, pos);
+              minX = Math.min(minX, pos.x);
+              maxX = Math.max(maxX, pos.x);
+              minY = Math.min(minY, pos.y);
+              maxY = Math.max(maxY, pos.y);
+            }
+          }
+        }
+      }
+    }
+
+    const headPos = boneScreenCoords.get('Head');
 
     // 3. Draw 3D Bone Connections (DirectX Bone Rigging)
     if (espActive) {
@@ -415,7 +492,7 @@ export default function GtaSimulator({
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
-      for (const [boneA, boneB] of BONE_CONNECTIONS) {
+      for (const [boneA, boneB] of BONE_PAIRS) {
         const pA = boneScreenCoords.get(boneA);
         const pB = boneScreenCoords.get(boneB);
         if (pA && pB && pA.visible && pB.visible) {
@@ -426,13 +503,13 @@ export default function GtaSimulator({
         }
       }
 
-      // Draw Key Joint Circles
-      for (const joint of KEY_JOINTS) {
+      // Draw Key Joint Nodes
+      for (const joint of KEY_JOINT_NAMES) {
         const p = boneScreenCoords.get(joint);
         if (p && p.visible) {
           ctx.beginPath();
-          ctx.arc(p.x, p.y, joint === 'mixamorig:Head' ? 6 : 3.5, 0, Math.PI * 2);
-          ctx.fillStyle = joint === 'mixamorig:Head' ? '#38bdf8' : '#ffffff';
+          ctx.arc(p.x, p.y, joint === 'Head' ? 6 : 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = joint === 'Head' ? '#38bdf8' : '#ffffff';
           ctx.fill();
           ctx.strokeStyle = '#00f0ff';
           ctx.lineWidth = 1.5;
@@ -441,14 +518,14 @@ export default function GtaSimulator({
       }
       ctx.restore();
 
-      // 4. Draw 3D Bounding Box (Tactical Corner Brackets)
+      // 4. Tactical Corner-Bracket Bounding Box
       if (minX !== Infinity && maxX !== -Infinity) {
-        const padX = 18;
-        const padY = 22;
+        const padX = 20;
+        const padY = 24;
         const boxX = minX - padX;
         const boxY = minY - padY;
-        const boxW = Math.max(70, maxX - minX + padX * 2);
-        const boxH = Math.max(120, maxY - minY + padY * 2);
+        const boxW = Math.max(75, maxX - minX + padX * 2);
+        const boxH = Math.max(130, maxY - minY + padY * 2);
 
         ctx.save();
         ctx.strokeStyle = '#00f0ff';
@@ -458,49 +535,41 @@ export default function GtaSimulator({
 
         const cornerLen = Math.min(22, boxW * 0.25);
 
-        // Top-Left corner
+        // Corner Brackets
         ctx.beginPath();
+        // Top-Left
         ctx.moveTo(boxX, boxY + cornerLen);
         ctx.lineTo(boxX, boxY);
         ctx.lineTo(boxX + cornerLen, boxY);
-        ctx.stroke();
-
-        // Top-Right corner
-        ctx.beginPath();
+        // Top-Right
         ctx.moveTo(boxX + boxW - cornerLen, boxY);
         ctx.lineTo(boxX + boxW, boxY);
         ctx.lineTo(boxX + boxW, boxY + cornerLen);
-        ctx.stroke();
-
-        // Bottom-Left corner
-        ctx.beginPath();
+        // Bottom-Left
         ctx.moveTo(boxX, boxY + boxH - cornerLen);
         ctx.lineTo(boxX, boxY + boxH);
         ctx.lineTo(boxX + cornerLen, boxY + boxH);
-        ctx.stroke();
-
-        // Bottom-Right corner
-        ctx.beginPath();
+        // Bottom-Right
         ctx.moveTo(boxX + boxW - cornerLen, boxY + boxH);
         ctx.lineTo(boxX + boxW, boxY + boxH);
         ctx.lineTo(boxX + boxW, boxY + boxH - cornerLen);
         ctx.stroke();
 
-        // Target Info Header above Box
+        // GTA V Player Info Tag
         ctx.font = '700 11px monospace';
-        const tagText = 'TARGET: MP_M_FREEMODE_01 [28m]';
+        const tagText = modelType === 'player' ? 'PLAYER: MP_M_FREEMODE_01 [24m]' : 'TARGET: FIB_OPERATIVE [28m]';
         const textWidth = ctx.measureText(tagText).width;
         const tagCenterX = boxX + boxW / 2;
         const tagTopY = boxY - 32;
 
-        // Header Background Tag
-        ctx.fillStyle = 'rgba(3, 8, 22, 0.85)';
-        ctx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
+        // Tag Background
+        ctx.fillStyle = 'rgba(3, 8, 22, 0.88)';
+        ctx.strokeStyle = 'rgba(0, 240, 255, 0.45)';
         ctx.lineWidth = 1;
         ctx.fillRect(tagCenterX - textWidth / 2 - 8, tagTopY, textWidth + 16, 26);
         ctx.strokeRect(tagCenterX - textWidth / 2 - 8, tagTopY, textWidth + 16, 26);
 
-        // Tag Text
+        // Tag Label
         ctx.fillStyle = '#00f0ff';
         ctx.textAlign = 'center';
         ctx.fillText(tagText, tagCenterX, tagTopY + 12);
@@ -516,16 +585,16 @@ export default function GtaSimulator({
         ctx.fillStyle = '#1e3a8a';
         ctx.fillRect(tagCenterX - barWidth / 2, tagTopY + 21, barWidth, 3);
         ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(tagCenterX - barWidth / 2, tagTopY + 21, barWidth * 0.8, 3);
+        ctx.fillRect(tagCenterX - barWidth / 2, tagTopY + 21, barWidth * 0.85, 3);
 
         ctx.restore();
       }
     }
 
-    // 5. Draw Silent Vector Aimbot Lock & Tracer Line
+    // 5. Silent Vector Aimbot Lock
     if (aimbotActive && headPos && headPos.visible) {
       ctx.save();
-      // Tracer line from crosshair to head bone
+      // Tracer vector from crosshair to head
       ctx.beginPath();
       ctx.moveTo(center.x, center.y);
       ctx.lineTo(headPos.x, headPos.y);
@@ -534,7 +603,7 @@ export default function GtaSimulator({
       ctx.setLineDash([4, 4]);
       ctx.stroke();
 
-      // Lock-On Target Diamond on Head
+      // Lock Diamond on Head Bone
       const dSize = 12;
       ctx.beginPath();
       ctx.moveTo(headPos.x, headPos.y - dSize);
@@ -548,16 +617,14 @@ export default function GtaSimulator({
       ctx.shadowBlur = 8;
       ctx.stroke();
 
-      // Lock status badge
       ctx.font = '700 9px monospace';
       ctx.fillStyle = '#ef4444';
       ctx.textAlign = 'center';
       ctx.fillText('LOCKED [HEAD]', headPos.x, headPos.y - dSize - 4);
-
       ctx.restore();
     }
 
-    // 6. Crosshair Center Point
+    // 6. Crosshair Reticle
     ctx.save();
     ctx.beginPath();
     ctx.arc(center.x, center.y, 3, 0, Math.PI * 2);
@@ -568,7 +635,7 @@ export default function GtaSimulator({
     ctx.restore();
   };
 
-  /* ─── Draw Viewport Badges & Streamproof Telemetry ─── */
+  /* ─── Draw Telemetry & Streamproof Status ─── */
   const drawViewStatusWatermark = (ctx, w, h) => {
     ctx.save();
     ctx.font = '600 11px monospace';
@@ -576,21 +643,18 @@ export default function GtaSimulator({
     // Top-Left: Game / Swapchain Status
     ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
     ctx.textAlign = 'left';
-    ctx.fillText('GTA V [BUILD 3095] • DX11 SWAPCHAIN: 144 FPS', 14, 24);
+    ctx.fillText('GTA V [ONLINE] • DX11 SWAPCHAIN: 144 FPS', 14, 24);
 
     // Bottom Status Bar
     if (viewMode === 'obs') {
       if (streamproofActive) {
-        // Streamproof Active: OBS is receiving clean feed
         ctx.fillStyle = 'rgba(16, 185, 129, 0.95)';
         ctx.fillText('🛡️ OBS STREAM CAPTURE: CLEAN FEED (BYPASS 100% ACTIVE • 0 OVERLAY ARTIFACTS)', 14, h - 14);
       } else {
-        // Streamproof OFF: OBS is leaking cheats
         ctx.fillStyle = 'rgba(239, 68, 68, 0.95)';
         ctx.fillText('⚠️ OBS CAPTURE: STREAM LEAK (CHEATS VISIBLE ON STREAM • TOGGLE STREAMPROOF GUARD)', 14, h - 14);
       }
     } else {
-      // Player Screen view
       if (streamproofActive) {
         ctx.fillStyle = 'rgba(16, 185, 129, 0.95)';
         ctx.fillText('● DIRECTX OVERLAY: VISIBLE • OBS HOOK: BYPASSED (WDA_EXCLUDEFROMCAPTURE)', 14, h - 14);
@@ -613,7 +677,7 @@ export default function GtaSimulator({
         height: '100%',
         borderRadius: '14px',
         overflow: 'hidden',
-        background: 'radial-gradient(circle at center, rgba(12, 28, 54, 0.85) 0%, #03050a 100%)',
+        background: 'radial-gradient(circle at center, rgba(14, 30, 56, 0.88) 0%, #03050a 100%)',
         border: '1px solid rgba(0, 240, 255, 0.25)',
         boxShadow: 'inset 0 0 40px rgba(0, 0, 0, 0.8)',
         userSelect: 'none',
@@ -657,7 +721,7 @@ export default function GtaSimulator({
       <div style={{ position: 'absolute', width: '100%', height: '1px', top: '50%', background: 'rgba(255,255,255,0.06)', pointerEvents: 'none' }} />
       <div style={{ position: 'absolute', height: '100%', width: '1px', left: '50%', background: 'rgba(255,255,255,0.06)', pointerEvents: 'none' }} />
 
-      {/* Top Header Bar: Perspective Switcher (Player Display vs OBS Feed vs Dual PIP) */}
+      {/* Top Header Bar: Perspective Switcher & Model Selector */}
       <div
         style={{
           position: 'absolute',
@@ -668,11 +732,37 @@ export default function GtaSimulator({
           zIndex: 10,
         }}
       >
+        {/* Model Selector Toggle */}
+        <button
+          type="button"
+          onClick={() => setModelType(modelType === 'player' ? 'soldier' : 'player')}
+          style={{
+            padding: '5px 9px',
+            fontSize: '0.72rem',
+            fontFamily: 'monospace',
+            fontWeight: 600,
+            borderRadius: '6px',
+            border: '1px solid rgba(255,255,255,0.15)',
+            background: 'rgba(0, 0, 0, 0.65)',
+            color: '#38bdf8',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            transition: 'all 0.2s',
+          }}
+          title="Toggle between Normal Player Model and Tactical Operative"
+        >
+          <User size={12} />
+          {modelType === 'player' ? 'Normal Player' : 'SWAT Operative'}
+        </button>
+
+        {/* Perspective: Player Screen */}
         <button
           type="button"
           onClick={() => setViewMode('player')}
           style={{
-            padding: '5px 10px',
+            padding: '5px 9px',
             fontSize: '0.72rem',
             fontFamily: 'monospace',
             fontWeight: 600,
@@ -692,11 +782,12 @@ export default function GtaSimulator({
           Player Screen
         </button>
 
+        {/* Perspective: OBS Feed */}
         <button
           type="button"
           onClick={() => setViewMode('obs')}
           style={{
-            padding: '5px 10px',
+            padding: '5px 9px',
             fontSize: '0.72rem',
             fontFamily: 'monospace',
             fontWeight: 600,
@@ -716,6 +807,7 @@ export default function GtaSimulator({
           OBS Feed
         </button>
 
+        {/* Perspective: PIP Compare */}
         <button
           type="button"
           onClick={() => setViewMode(viewMode === 'pip' ? 'player' : 'pip')}
@@ -736,9 +828,10 @@ export default function GtaSimulator({
           }}
           title="Picture-in-picture side-by-side comparison"
         >
-          PIP Compare
+          PIP
         </button>
 
+        {/* Auto Rotate Button */}
         <button
           type="button"
           onClick={() => setAutoRotate(!autoRotate)}
@@ -833,7 +926,7 @@ export default function GtaSimulator({
             }}
           />
           <div style={{ color: '#00f0ff', fontFamily: 'monospace', fontSize: '0.8rem', letterSpacing: '1px' }}>
-            SYNCHRONIZING GTA V PED SKELETON...
+            SYNCHRONIZING GTA V PLAYER SKELETON...
           </div>
         </div>
       )}
