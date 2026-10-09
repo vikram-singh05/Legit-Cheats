@@ -6,6 +6,8 @@ import {
   Gauge, Radio, Sliders, ChevronDown, Check, Sparkles, Terminal,
   Compass, ArrowRight, Layers, Flame, RefreshCw, Server
 } from 'lucide-react';
+import GtaSimulator from '../components/GtaSimulator';
+
 
 /* ─── Reusable Animated Section Wrapper ─── */
 function AnimatedSection({ children, className, style, id, delay = 0 }) {
@@ -297,7 +299,7 @@ export default function PublicSite() {
               marginBottom: '1.25rem'
             }}
           >
-            The Ultimate DLC for <br />
+            The Ultimate <br />
             <span className="text-gradient-primary">LEGIT CHEATS</span>
           </motion.h1>
 
@@ -382,7 +384,7 @@ export default function PublicSite() {
             </div>
             <div style={{ textAlign: 'center' }}>
               <AnimatedCounter value="100%" color="#fff" />
-              <div className="text-muted" style={{ fontSize: '0.76rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Streamproof (OBS)</div>
+              <div className="text-muted" style={{ fontSize: '0.76rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Streamproof </div>
             </div>
             <div style={{ textAlign: 'center' }}>
               <AnimatedCounter value="Ring-0" color="#10b981" />
@@ -447,113 +449,14 @@ export default function PublicSite() {
             }}
           >
             <div className="grid md:grid-cols-2 gap-6 items-stretch">
-              {/* Simulator Viewport */}
-              <div
-                style={{
-                  background: 'radial-gradient(circle at center, rgba(10, 24, 44, 0.75) 0%, #030407 100%)',
-                  borderRadius: '14px',
-                  border: '1px solid rgba(0, 240, 255, 0.25)',
-                  minHeight: '360px',
-                  position: 'relative',
-                  overflow: 'hidden',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                {/* Crosshair Guides */}
-                <div style={{ position: 'absolute', width: '100%', height: '1px', background: 'rgba(255,255,255,0.06)' }} />
-                <div style={{ position: 'absolute', height: '100%', width: '1px', background: 'rgba(255,255,255,0.06)' }} />
-
-                {/* Animated FOV Circle */}
-                {demoAim && (
-                  <motion.div
-                    animate={{ scale: [1, 1.025, 1], opacity: [0.65, 0.85, 0.65] }}
-                    transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
-                    style={{
-                      width: `${demoFov * 1.8}px`,
-                      height: `${demoFov * 1.8}px`,
-                      borderRadius: '50%',
-                      border: '1.5px dashed #00f0ff',
-                      boxShadow: '0 0 15px rgba(0, 240, 255, 0.25)',
-                      position: 'absolute',
-                      pointerEvents: 'none'
-                    }}
-                  />
-                )}
-
-                {/* Target ESP Mock */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '50%',
-                    left: '50%',
-                    transform: 'translate(-50%, -50%)',
-                    zIndex: 5,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    pointerEvents: 'none'
-                  }}
-                >
-                  <AnimatePresence>
-                    {demoEsp && (
-                      <motion.div
-                        initial={{ scale: 0.8, opacity: 0, y: 10 }}
-                        animate={{ scale: 1, opacity: 1, y: 0 }}
-                        exit={{ scale: 0.8, opacity: 0, y: -10 }}
-                        transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-                        style={{
-                          border: '1.5px solid #00f0ff',
-                          borderRadius: '6px',
-                          padding: '10px 16px',
-                          background: 'rgba(0, 240, 255, 0.08)',
-                          boxShadow: '0 0 20px rgba(0, 240, 255, 0.25)',
-                          textAlign: 'center',
-                          marginBottom: '8px'
-                        }}
-                      >
-                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#00f0ff', fontFamily: 'monospace' }}>TARGET [54m]</div>
-                        <div style={{ width: '42px', height: '4px', background: '#10b981', borderRadius: '2px', margin: '3px auto' }} />
-                        <div style={{ fontSize: '0.68rem', color: '#10b981', fontFamily: 'monospace' }}>100 HP | 50 AP</div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
-                  {/* Crosshair Center Point */}
-                  <motion.div
-                    animate={{
-                      boxShadow: demoAim
-                        ? ['0 0 5px #00f0ff', '0 0 15px #00f0ff', '0 0 5px #00f0ff']
-                        : '0 0 0px transparent',
-                    }}
-                    transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
-                    style={{
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      background: demoAim ? '#00f0ff' : '#ffffff',
-                    }}
-                  />
-                </div>
-
-                {/* Overlay Badge */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    bottom: '10px',
-                    left: '12px',
-                    fontSize: '0.7rem',
-                    fontFamily: 'monospace',
-                    color: '#71717a',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.35rem'
-                  }}
-                >
-                  <span className="status-dot-blue" style={{ width: '5px', height: '5px' }} />
-                  <span>DX11 SWAPCHAIN: 144 FPS • STREAMPROOF: {demoStreamproof ? 'ACTIVE' : 'OFF'}</span>
-                </div>
+              {/* Simulator Viewport with 3D GTA V Model & Skeleton */}
+              <div style={{ minHeight: '430px', display: 'flex', flexDirection: 'column' }}>
+                <GtaSimulator
+                  aimbotActive={demoAim}
+                  espActive={demoEsp}
+                  streamproofActive={demoStreamproof}
+                  fov={demoFov}
+                />
               </div>
 
               {/* Controls */}
@@ -660,7 +563,7 @@ export default function PublicSite() {
                       }}
                     >
                       <div>
-                        <div style={{ fontWeight: 600, color: '#fff', fontSize: '0.9rem' }}>OBS Streamproof Guard</div>
+                        <div style={{ fontWeight: 600, color: '#fff', fontSize: '0.9rem' }}>Streamproof Guard</div>
                         <div className="text-muted" style={{ fontSize: '0.78rem' }}>Invisible to screen share and capture hooks</div>
                       </div>
                       <div
