@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Shield, Eye, Video, Monitor, AlertTriangle, CheckCircle, RotateCw, User, ShieldAlert } from 'lucide-react';
+import { Video, Monitor, AlertTriangle, RotateCw } from 'lucide-react';
+
 
 
 /* ─── Generic Bone Connections (Works with both standard Humanoid and Mixamo rigs) ─── */
@@ -80,7 +81,6 @@ export default function GtaSimulator({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [viewMode, setViewMode] = useState('player'); // 'player' | 'obs' | 'pip'
-  const [modelType, setModelType] = useState('player'); // 'player' (normal player) | 'soldier' (tactical)
   const [autoRotate, setAutoRotate] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -201,7 +201,7 @@ export default function GtaSimulator({
     };
   }, []);
 
-  /* ─── Load Selected Character Model (Normal Player vs Tactical) ─── */
+  /* ─── Load Normal Player Character Model ─── */
   useEffect(() => {
     const { scene } = stateRef.current;
     if (!scene) return;
@@ -220,7 +220,7 @@ export default function GtaSimulator({
     }
     stateRef.current.bonesMap.clear();
 
-    const modelPath = modelType === 'soldier' ? '/soldier.glb' : '/player.glb';
+    const modelPath = '/player.glb';
     const loader = new GLTFLoader();
     if (typeof MeshoptDecoder !== 'undefined') {
       loader.setMeshoptDecoder(MeshoptDecoder);
@@ -305,7 +305,7 @@ export default function GtaSimulator({
         }
       }
     );
-  }, [modelType]);
+  }, []);
 
   /* ─── Drag to Rotate Handling ─── */
   const handleMouseDown = (e) => {
@@ -397,9 +397,6 @@ export default function GtaSimulator({
       if (shouldDrawCheat && bonesMap.size > 0) {
         drawCheatOverlay(ctx, w, h, bonesMap, camera);
       }
-
-      // Draw view mode watermarks & streamproof telemetry
-      drawViewStatusWatermark(ctx, w, h);
     }
 
     // Render PIP mini OBS monitor if active
@@ -418,7 +415,7 @@ export default function GtaSimulator({
     }
 
     stateRef.current.animFrameId = requestAnimationFrame(renderFrame);
-  }, [aimbotActive, espActive, streamproofActive, fov, viewMode, autoRotate, isDragging, modelType]);
+  }, [aimbotActive, espActive, streamproofActive, fov, viewMode, autoRotate, isDragging]);
 
   useEffect(() => {
     stateRef.current.animFrameId = requestAnimationFrame(renderFrame);
@@ -583,7 +580,7 @@ export default function GtaSimulator({
 
         // GTA V Player Info Tag
         ctx.font = '700 11px monospace';
-        const tagText = modelType === 'player' ? 'PLAYER: MP_M_FREEMODE_01 [24m]' : 'TARGET: FIB_OPERATIVE [28m]';
+        const tagText = 'PLAYER: MP_M_FREEMODE_01 [24m]';
         const textWidth = ctx.measureText(tagText).width;
         const tagCenterX = boxX + boxW / 2;
         const tagTopY = boxY - 32;
@@ -661,38 +658,6 @@ export default function GtaSimulator({
     ctx.restore();
   };
 
-  /* ─── Draw Telemetry & Streamproof Status ─── */
-  const drawViewStatusWatermark = (ctx, w, h) => {
-    ctx.save();
-    ctx.font = '600 11px monospace';
-
-    // Top-Left: Game / Swapchain Status
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
-    ctx.textAlign = 'left';
-    ctx.fillText('GTA V [ONLINE] • DX11 SWAPCHAIN: 144 FPS', 14, 24);
-
-    // Bottom Status Bar
-    if (viewMode === 'obs') {
-      if (streamproofActive) {
-        ctx.fillStyle = 'rgba(16, 185, 129, 0.95)';
-        ctx.fillText('🛡️ OBS STREAM CAPTURE: CLEAN FEED (BYPASS 100% ACTIVE • 0 OVERLAY ARTIFACTS)', 14, h - 14);
-      } else {
-        ctx.fillStyle = 'rgba(239, 68, 68, 0.95)';
-        ctx.fillText('⚠️ OBS CAPTURE: STREAM LEAK (CHEATS VISIBLE ON STREAM • TOGGLE STREAMPROOF GUARD)', 14, h - 14);
-      }
-    } else {
-      if (streamproofActive) {
-        ctx.fillStyle = 'rgba(16, 185, 129, 0.95)';
-        ctx.fillText('● DIRECTX OVERLAY: VISIBLE • OBS HOOK: BYPASSED (WDA_EXCLUDEFROMCAPTURE)', 14, h - 14);
-      } else {
-        ctx.fillStyle = 'rgba(245, 158, 11, 0.95)';
-        ctx.fillText('● DIRECTX OVERLAY: VISIBLE • OBS HOOK: EXPOSED (RECORDING WOULD CAPTURE CHEAT)', 14, h - 14);
-      }
-    }
-
-    ctx.restore();
-  };
-
   return (
     <div
       ref={containerRef}
@@ -758,31 +723,6 @@ export default function GtaSimulator({
           zIndex: 10,
         }}
       >
-        {/* Model Selector Toggle */}
-        <button
-          type="button"
-          onClick={() => setModelType(modelType === 'player' ? 'soldier' : 'player')}
-          style={{
-            padding: '5px 9px',
-            fontSize: '0.72rem',
-            fontFamily: 'monospace',
-            fontWeight: 600,
-            borderRadius: '6px',
-            border: '1px solid rgba(255,255,255,0.15)',
-            background: 'rgba(0, 0, 0, 0.65)',
-            color: '#38bdf8',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '5px',
-            transition: 'all 0.2s',
-          }}
-          title="Toggle between Normal Player Model and Tactical Operative"
-        >
-          <User size={12} />
-          {modelType === 'player' ? 'Normal Player' : 'SWAT Operative'}
-        </button>
-
         {/* Perspective: Player Screen */}
         <button
           type="button"
@@ -979,20 +919,6 @@ export default function GtaSimulator({
         </div>
       )}
 
-      {/* Drag instruction tooltip */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: '10px',
-          right: '12px',
-          fontSize: '0.66rem',
-          fontFamily: 'monospace',
-          color: 'rgba(255, 255, 255, 0.35)',
-          pointerEvents: 'none',
-        }}
-      >
-        DRAG TO ROTATE 360°
-      </div>
     </div>
   );
 }
