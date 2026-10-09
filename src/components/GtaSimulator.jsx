@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, Eye, Video, Monitor, AlertTriangle, CheckCircle, RotateCw, User, ShieldAlert } from 'lucide-react';
+
 
 /* ─── Generic Bone Connections (Works with both standard Humanoid and Mixamo rigs) ─── */
 const BONE_PAIRS = [
@@ -220,63 +222,87 @@ export default function GtaSimulator({
 
     const modelPath = modelType === 'soldier' ? '/soldier.glb' : '/player.glb';
     const loader = new GLTFLoader();
+    if (typeof MeshoptDecoder !== 'undefined') {
+      loader.setMeshoptDecoder(MeshoptDecoder);
+    }
+
+    const setupModel = (gltf) => {
+      const model = gltf.scene;
+
+      // Auto-compute bounding box to normalize scale & floor position
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+
+      const targetHeight = 1.95;
+      const scaleFactor = targetHeight / (size.y || 1);
+      model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+      // Center on X/Z and align feet to floor (Y = 0)
+      model.position.x = -center.x * scaleFactor;
+      model.position.y = -box.min.y * scaleFactor;
+      model.position.z = -center.z * scaleFactor;
+
+      // Map bones and configure materials
+      const bonesMap = new Map();
+      model.traverse((child) => {
+        if (child.isBone || child.type === 'Bone') {
+          bonesMap.set(child.name, child);
+        }
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+          if (child.material) {
+            child.material.roughness = 0.7;
+            child.material.metalness = 0.15;
+          }
+        }
+      });
+
+      scene.add(model);
+      stateRef.current.characterRoot = model;
+      stateRef.current.bonesMap = bonesMap;
+
+      // Play animations if model has them
+      if (gltf.animations && gltf.animations.length > 0) {
+        const mixer = new THREE.AnimationMixer(model);
+        const idleClip = gltf.animations.find((c) => c.name.toLowerCase().includes('idle')) || gltf.animations[0];
+        if (idleClip) {
+          mixer.clipAction(idleClip).play();
+        }
+        stateRef.current.mixer = mixer;
+      }
+
+      setLoading(false);
+    };
 
     loader.load(
       modelPath,
       (gltf) => {
-        const model = gltf.scene;
-
-        // Auto-compute bounding box to normalize scale & floor position
-        const box = new THREE.Box3().setFromObject(model);
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-
-        const targetHeight = 1.95;
-        const scaleFactor = targetHeight / (size.y || 1);
-        model.scale.set(scaleFactor, scaleFactor, scaleFactor);
-
-        // Center on X/Z and align feet to floor (Y = 0)
-        model.position.x = -center.x * scaleFactor;
-        model.position.y = -box.min.y * scaleFactor;
-        model.position.z = -center.z * scaleFactor;
-
-        // Map bones and configure materials
-        const bonesMap = new Map();
-        model.traverse((child) => {
-          if (child.isBone || child.type === 'Bone') {
-            bonesMap.set(child.name, child);
-          }
-          if (child.isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            if (child.material) {
-              child.material.roughness = 0.7;
-              child.material.metalness = 0.15;
-            }
-          }
-        });
-
-        scene.add(model);
-        stateRef.current.characterRoot = model;
-        stateRef.current.bonesMap = bonesMap;
-
-        // Play animations if model has them
-        if (gltf.animations && gltf.animations.length > 0) {
-          const mixer = new THREE.AnimationMixer(model);
-          const idleClip = gltf.animations.find((c) => c.name.toLowerCase().includes('idle')) || gltf.animations[0];
-          if (idleClip) {
-            mixer.clipAction(idleClip).play();
-          }
-          stateRef.current.mixer = mixer;
-        }
-
-        setLoading(false);
+        setupModel(gltf);
       },
       undefined,
       (err) => {
         console.error(`Failed to load ${modelPath}:`, err);
-        setLoadError('Failed to load 3D character model');
-        setLoading(false);
+        // Fallback to soldier if player fails
+        if (modelPath !== '/soldier.glb') {
+          console.warn('Attempting fallback to /soldier.glb...');
+          loader.load(
+            '/soldier.glb',
+            (fallbackGltf) => {
+              setupModel(fallbackGltf);
+            },
+            undefined,
+            (fallbackErr) => {
+              console.error('Fallback model also failed:', fallbackErr);
+              setLoadError('Failed to load 3D character model');
+              setLoading(false);
+            }
+          );
+        } else {
+          setLoadError('Failed to load 3D character model');
+          setLoading(false);
+        }
       }
     );
   }, [modelType]);
