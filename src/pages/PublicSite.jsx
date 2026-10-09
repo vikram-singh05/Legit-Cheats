@@ -143,7 +143,7 @@ const FEATURES_DATA = [
 const PRICING_PLANS = [
   {
     name: '1-Day Access',
-    price: '$4.99',
+    price: '₹50',
     period: '24 Hours',
     badge: null,
     popular: false,
@@ -157,7 +157,7 @@ const PRICING_PLANS = [
   },
   {
     name: '7-Day Pass',
-    price: '$14.99',
+    price: '₹130',
     period: '1 Week',
     badge: null,
     popular: false,
@@ -171,7 +171,7 @@ const PRICING_PLANS = [
   },
   {
     name: '30-Day Pro',
-    price: '$29.99',
+    price: '₹600',
     period: '1 Month',
     badge: 'MOST POPULAR',
     popular: true,
@@ -186,7 +186,7 @@ const PRICING_PLANS = [
   },
   {
     name: 'Lifetime Elite',
-    price: '$89.99',
+    price: '₹2000',
     period: 'Permanent Access',
     badge: 'BEST VALUE',
     popular: false,
