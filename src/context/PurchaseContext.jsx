@@ -291,16 +291,26 @@ export function PurchaseProvider({ children }) {
     }
 
     try {
-      const { data: dbLicense, error: dbErr } = await supabase
-        .from('licenses')
-        .select('*')
-        .eq('license_key', cleanKey)
-        .eq('status', 'active')
-        .maybeSingle();
-
-      if (dbErr || !dbLicense) {
-        throw new Error('License key is invalid, already in use, or expired.');
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
       }
+
+      const response = await fetch('/api/redeem-key', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ license_key: cleanKey })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Failed to redeem license key.');
+      }
+
+      const dbLicense = result.license;
 
       // Infer plan from dbLicense
       let matchedPlan = PRICING_PLANS.find(p => p.isLifetime === dbLicense.is_lifetime && p.durationDays === dbLicense.duration_days);
