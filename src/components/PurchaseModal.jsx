@@ -25,7 +25,7 @@ export default function PurchaseModal() {
     APP_FILE_NAME
   } = usePurchase();
 
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const navigate = useNavigate();
 
   const [activeTab, setActiveTab] = useState('upi'); // 'upi' | 'razorpay'
@@ -112,7 +112,7 @@ export default function PurchaseModal() {
 
     try {
       // 1. Create Order on Backend (required for signature verification)
-      const token = (await supabase.auth.getSession()).data.session?.access_token;
+      const token = session?.access_token;
       const orderRes = await fetch('/api/create-order', {
         method: 'POST',
         headers: {
