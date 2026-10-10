@@ -25,7 +25,6 @@ export default function Login() {
   const rawRedirect = searchParams.get('redirect') || '/profile';
   const redirectTarget = ALLOWED_REDIRECTS.includes(rawRedirect) ? rawRedirect : '/profile';
   const planParam = searchParams.get('plan') || '';
-  const isRescueAllowed = searchParams.get('rescue') === 'true';
   // --- SECURITY FIX (CRIT-03): Removed emergency rescue key login ---
   // Admin access is exclusively through Supabase auth + profiles table role check
 
