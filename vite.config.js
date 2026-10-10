@@ -16,6 +16,10 @@ export default defineConfig(({ mode }) => {
         'Referrer-Policy': 'strict-origin-when-cross-origin',
       },
     },
+    build: {
+      sourcemap: false,
+      chunkSizeWarningLimit: 1500,
+    },
     plugins: [
       react(),
       {

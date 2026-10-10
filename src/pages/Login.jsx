@@ -22,6 +22,11 @@ export default function Login() {
   const navigate = useNavigate();
   const redirectTarget = searchParams.get('redirect') || '/profile';
   const planParam = searchParams.get('plan') || '';
+  const isRescueAllowed = searchParams.get('rescue') === 'true';
+
+  // Anti-Brute-Force Rate Limiting State
+  const [failCount, setFailCount] = useState(0);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
 
   const handlePostAuthRedirect = () => {
     if (redirectTarget === 'checkout') {
@@ -34,6 +39,13 @@ export default function Login() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (Date.now() < cooldownUntil) {
+      const waitSec = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      setError(`Security Alert: Too many failed attempts. Cooldown active for ${waitSec} seconds.`);
+      return;
+    }
+
     setError('');
     setSuccessMsg('');
     setSubmitting(true);
@@ -81,6 +93,13 @@ export default function Login() {
     } catch (err) {
       console.error(err);
       setError(err.message || 'Authentication failed. Please verify your credentials.');
+      const newFails = failCount + 1;
+      setFailCount(newFails);
+      if (newFails >= 5) {
+        setCooldownUntil(Date.now() + 30000); // 30 second lockdown
+        setError('Security Alert: 5 consecutive failed attempts. Authentication locked for 30 seconds.');
+        setFailCount(0);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -599,52 +618,54 @@ export default function Login() {
           </motion.button>
         </form>
 
-        {/* Footer switch to emergency key or back */}
-        <motion.div
-          variants={itemVariants}
-          style={{ marginTop: '1.75rem', paddingTop: '1.25rem', borderTop: '1px solid rgba(255, 255, 255, 0.06)', textAlign: 'center' }}
-        >
-          {mode !== 'emergency' ? (
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.03, color: '#0088ff' }}
-              whileTap={{ scale: 0.97 }}
-              onClick={() => { setMode('emergency'); setError(''); }}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#71717a',
-                fontSize: '0.82rem',
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.35rem',
-                transition: 'color 0.2s ease'
-              }}
-            >
-              <Key size={14} /> Service Role Key Login <ChevronRight size={14} />
-            </motion.button>
-          ) : (
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.97 }}
-              onClick={() => { setMode('signin'); setError(''); }}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#0088ff',
-                fontSize: '0.82rem',
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.35rem'
-              }}
-            >
-              Back to Standard Email Login
-            </motion.button>
-          )}
-        </motion.div>
+        {/* Footer switch to emergency rescue mode (Hidden from public unless ?rescue=true) */}
+        {(isRescueAllowed || mode === 'emergency') && (
+          <motion.div
+            variants={itemVariants}
+            style={{ marginTop: '1.75rem', paddingTop: '1.25rem', borderTop: '1px solid rgba(255, 255, 255, 0.06)', textAlign: 'center' }}
+          >
+            {mode !== 'emergency' ? (
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.03, color: '#0088ff' }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => { setMode('emergency'); setError(''); }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#71717a',
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  transition: 'color 0.2s ease'
+                }}
+              >
+                <Key size={14} /> Emergency Rescue Key Login <ChevronRight size={14} />
+              </motion.button>
+            ) : (
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => { setMode('signin'); setError(''); }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#0088ff',
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem'
+                }}
+              >
+                Back to Standard Email Login
+              </motion.button>
+            )}
+          </motion.div>
+        )}
       </motion.div>
     </div>
   );

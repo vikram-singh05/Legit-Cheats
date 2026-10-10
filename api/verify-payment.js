@@ -236,7 +236,7 @@ export default async function handler(req, res) {
           method: 'POST',
           headers: {
             'apikey': supabaseAnonKey,
-            'Authorization': `Bearer ${supabaseAnonKey}`,
+            'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY || bearerToken || supabaseAnonKey}`,
             'Content-Type': 'application/json',
             'Prefer': 'return=minimal'
           },
