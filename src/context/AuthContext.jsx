@@ -126,6 +126,7 @@ export function AuthProvider({ children }) {
       email: email.trim().toLowerCase(),
       password,
       options: {
+        emailRedirectTo: `${window.location.origin}/profile`,
         data: {
           // --- SECURITY: Do NOT set role in user_metadata; it's user-writable ---
           // Admin role should only be set via Supabase SQL: UPDATE auth.users SET raw_app_meta_data = ...
