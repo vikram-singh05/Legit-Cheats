@@ -591,19 +591,6 @@ export default function PurchaseModal() {
                   <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><CheckCheck size={14} color="#10b981" /> 50+ Net Banking Banks</span>
                 </div>
 
-                <div style={{ background: 'rgba(0, 136, 255, 0.08)', border: '1px solid rgba(0, 136, 255, 0.25)', borderRadius: '12px', padding: '0.85rem 1rem', marginBottom: '1.25rem', textAlign: 'left', fontSize: '0.8rem', color: '#93c5fd', lineHeight: 1.55 }}>
-                  <div style={{ fontWeight: 700, color: '#67e8f9', marginBottom: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                    <Shield size={14} /> Razorpay Test Sandbox Active
-                  </div>
-                  <div>
-                    <strong>Why real bank apps fail here:</strong> Test mode generates sandbox virtual VPAs (<code>random@razorpay</code>) which live banking apps (GPay / PhonePe / Cred) cannot resolve on the live NPCI switch (resulting in <em>"Taking a bit longer"</em> error).
-                  </div>
-                  <div style={{ marginTop: '0.4rem' }}>
-                    • <strong>To make a real payment from your phone:</strong> Switch to the <strong>Direct UPI &amp; QR</strong> tab above to pay directly to <code>legitcheats@axl</code>.
-                    <br />
-                    • <strong>To simulate a successful test:</strong> Click <em>Pay with Razorpay</em> below, choose <strong>UPI</strong>, and enter <code style={{ color: '#fff', background: 'rgba(0,0,0,0.5)', padding: '2px 6px', borderRadius: '4px' }}>success@razorpay</code>.
-                  </div>
-                </div>
 
                 <motion.button
                   whileHover={{ scale: 1.03 }}
