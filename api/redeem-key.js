@@ -81,7 +81,8 @@ export default async function handler(req, res) {
     });
 
     if (!checkRes.ok) {
-      return res.status(500).json({ error: 'Failed to verify license key with database.' });
+      const errorText = await checkRes.text();
+      return res.status(500).json({ error: `Failed to verify license key with database: ${checkRes.status} ${errorText}` });
     }
 
     const existingLicenses = await checkRes.json();
