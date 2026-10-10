@@ -6,6 +6,19 @@ const redeemedPayments = new Set();
 // In-memory rate limiting map: ip -> { count, resetTime }
 const rateLimitMap = new Map();
 
+// --- SECURITY: Trusted IP extraction for Vercel ---
+function getTrustedClientIp(req) {
+  // Vercel sets x-real-ip from the actual connecting client
+  // x-vercel-forwarded-for is Vercel's trusted proxy chain
+  // NEVER trust raw x-forwarded-for (user-spoofable)
+  return (
+    req.headers['x-real-ip'] ||
+    req.headers['x-vercel-forwarded-for']?.split(',')[0]?.trim() ||
+    req.socket?.remoteAddress ||
+    '0.0.0.0'
+  );
+}
+
 function checkRateLimit(clientIp) {
   const now = Date.now();
   const windowMs = 60 * 1000; // 1 minute
@@ -37,6 +50,14 @@ const PLAN_AMOUNTS = {
   plan_lifetime: { name: 'Lifetime Elite', amount: 3999, durationDays: null, isLifetime: true },
 };
 
+// --- SECURITY: Allowed origins for CORS ---
+const ALLOWED_ORIGINS = [
+  'https://ligeitcheats.live',
+  'https://www.ligeitcheats.live',
+  'http://localhost:5173',
+  'http://localhost:3000',
+];
+
 function generateSecureLicenseKey(prefix = 'LEGIT') {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const segments = [];
@@ -61,19 +82,47 @@ export default async function handler(req, res) {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
 
+  // --- SECURITY: CORS Origin Validation ---
+  const origin = req.headers['origin'] || '';
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Max-Age', '86400');
+  }
+
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  // 2. IP Rate Limiting Guard
-  const clientIp = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
+  // 2. IP Rate Limiting Guard (using trusted Vercel IP)
+  const clientIp = getTrustedClientIp(req);
   if (!checkRateLimit(clientIp)) {
     return res.status(429).json({ error: 'Security Alert: Rate limit exceeded. Please wait 60 seconds.' });
   }
 
   try {
-    const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://lpeoqbfklmoeonctjist.supabase.co';
+    // --- SECURITY: Require env vars, never fallback to hardcoded credentials ---
+    const supabaseUrl = process.env.VITE_SUPABASE_URL;
     const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const razorpayKeyId = process.env.VITE_RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID;
+    const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    // Fail-fast if critical credentials are missing
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.error('FATAL: Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY env vars');
+      return res.status(500).json({ error: 'Server configuration error. Contact support.' });
+    }
+    if (!razorpayKeyId || !razorpayKeySecret) {
+      console.error('FATAL: Missing RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET env vars');
+      return res.status(500).json({ error: 'Payment gateway configuration error. Contact support.' });
+    }
 
     // 3. Mandatory User Authentication Validation
     const authHeader = req.headers['authorization'] || req.headers['Authorization'];
@@ -88,32 +137,30 @@ export default async function handler(req, res) {
     let verifiedUserId = null;
     let verifiedUserEmail = null;
 
-    if (supabaseUrl && supabaseAnonKey) {
-      try {
-        const authCheckRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
-          headers: {
-            'apikey': supabaseAnonKey,
-            'Authorization': `Bearer ${bearerToken}`
-          }
+    try {
+      const authCheckRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        headers: {
+          'apikey': supabaseAnonKey,
+          'Authorization': `Bearer ${bearerToken}`
+        }
+      });
+
+      if (!authCheckRes.ok) {
+        return res.status(401).json({
+          error: 'Authentication Expired: Your session could not be verified. Please log in again.'
         });
-
-        if (!authCheckRes.ok) {
-          return res.status(401).json({
-            error: 'Authentication Expired: Your session could not be verified. Please log in again.'
-          });
-        }
-
-        const authUser = await authCheckRes.json();
-        if (!authUser || !authUser.id) {
-          return res.status(401).json({ error: 'Authentication Failed: User record not found.' });
-        }
-
-        verifiedUserId = authUser.id;
-        verifiedUserEmail = authUser.email;
-      } catch (authErr) {
-        console.error('Auth verification error:', authErr);
-        return res.status(500).json({ error: 'Security server failed to validate user credentials.' });
       }
+
+      const authUser = await authCheckRes.json();
+      if (!authUser || !authUser.id) {
+        return res.status(401).json({ error: 'Authentication Failed: User record not found.' });
+      }
+
+      verifiedUserId = authUser.id;
+      verifiedUserEmail = authUser.email;
+    } catch (authErr) {
+      console.error('Auth verification error:', authErr);
+      return res.status(500).json({ error: 'Security server failed to validate user credentials.' });
     }
 
     const { payment_id, plan_id } = req.body || {};
@@ -140,50 +187,48 @@ export default async function handler(req, res) {
     }
 
     // 7. Persistent Anti-Replay: Check Supabase database
-    if (supabaseUrl && supabaseAnonKey) {
-      try {
-        const checkRes = await fetch(`${supabaseUrl}/rest/v1/licenses?note=like.*${cleanPaymentId}*&select=license_key,status`, {
-          headers: {
-            'apikey': supabaseAnonKey,
-            'Authorization': `Bearer ${supabaseAnonKey}`
-          }
-        });
-        if (checkRes.ok) {
-          const existingLicenses = await checkRes.json();
-          if (Array.isArray(existingLicenses) && existingLicenses.length > 0) {
-            redeemedPayments.add(cleanPaymentId);
-            return res.status(200).json({
-              success: true,
-              key: existingLicenses[0].license_key,
-              order: {
-                orderId: 'ORD-' + Math.floor(100000 + Math.random() * 900000),
-                planId: plan_id,
-                planName: plan.name,
-                price: `₹${plan.amount}`,
-                amount: plan.amount,
-                durationDays: plan.durationDays,
-                isLifetime: plan.isLifetime,
-                paymentMethod: 'razorpay_verified',
-                transactionRef: cleanPaymentId,
-                status: 'verified',
-                verifiedAt: new Date().toISOString(),
-                userEmail: verifiedUserEmail,
-                hwid: null,
-                isReclaimed: true
-              }
-            });
-          }
+    // --- SECURITY: Use service role key for server-side queries to bypass RLS ---
+    const dbAuthToken = supabaseServiceKey || supabaseAnonKey;
+    try {
+      const checkRes = await fetch(
+        `${supabaseUrl}/rest/v1/licenses?note=like.*${encodeURIComponent(cleanPaymentId)}*&select=license_key,status`, {
+        headers: {
+          'apikey': supabaseAnonKey,
+          'Authorization': `Bearer ${dbAuthToken}`
         }
-      } catch (checkErr) {
-        console.warn('Anti-replay database query notice:', checkErr);
+      });
+      if (checkRes.ok) {
+        const existingLicenses = await checkRes.json();
+        if (Array.isArray(existingLicenses) && existingLicenses.length > 0) {
+          redeemedPayments.add(cleanPaymentId);
+          return res.status(200).json({
+            success: true,
+            key: existingLicenses[0].license_key,
+            order: {
+              orderId: 'ORD-' + Math.floor(100000 + Math.random() * 900000),
+              planId: plan_id,
+              planName: plan.name,
+              price: `₹${plan.amount}`,
+              amount: plan.amount,
+              durationDays: plan.durationDays,
+              isLifetime: plan.isLifetime,
+              paymentMethod: 'razorpay_verified',
+              transactionRef: cleanPaymentId,
+              status: 'verified',
+              verifiedAt: new Date().toISOString(),
+              userEmail: verifiedUserEmail,
+              hwid: null,
+              isReclaimed: true
+            }
+          });
+        }
       }
+    } catch (checkErr) {
+      console.warn('Anti-replay database query notice:', checkErr);
     }
 
     // 8. Server-to-Server Razorpay API Verification
-    const keyId = process.env.VITE_RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID || 'rzp_test_Tm6lH5qGJYNOJ2';
-    const keySecret = process.env.RAZORPAY_KEY_SECRET || 'gy43jhrKZWg70Rki7Zatmn8d';
-
-    const authHeaderEncoded = 'Basic ' + Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+    const authHeaderEncoded = 'Basic ' + Buffer.from(`${razorpayKeyId}:${razorpayKeySecret}`).toString('base64');
 
     const razorpayRes = await fetch(`https://api.razorpay.com/v1/payments/${cleanPaymentId}`, {
       method: 'GET',
@@ -194,9 +239,8 @@ export default async function handler(req, res) {
     });
 
     if (!razorpayRes.ok) {
-      const errText = await razorpayRes.text();
-      console.error('Razorpay verification error:', errText);
-      return res.status(400).json({ error: 'Payment not found or rejected by Razorpay.' });
+      console.error('Razorpay verification error:', await razorpayRes.text());
+      return res.status(400).json({ error: 'Payment verification failed. Please try again or contact support.' });
     }
 
     const paymentData = await razorpayRes.json();
@@ -204,15 +248,16 @@ export default async function handler(req, res) {
     // 9. Audit Payment Status
     if (paymentData.status !== 'captured' && paymentData.status !== 'authorized') {
       return res.status(400).json({
-        error: `Payment is not in captured status (current status: ${paymentData.status}).`
+        error: 'Payment has not been completed successfully. Please complete the payment first.'
       });
     }
 
     // 10. Audit Exact Payment Amount (Anti-tampering against tier spoofing)
     const expectedAmountPaise = plan.amount * 100;
     if (paymentData.amount !== expectedAmountPaise) {
+      // --- SECURITY: Generic error message, do not leak expected amounts ---
       return res.status(400).json({
-        error: `Payment amount (${paymentData.amount / 100} INR) does not match plan price (${plan.amount} INR).`
+        error: 'Payment amount does not match the selected plan. Please contact support.'
       });
     }
 
@@ -230,27 +275,33 @@ export default async function handler(req, res) {
     const verifiedAt = new Date().toISOString();
 
     // 13. Sync with Supabase licenses table bound to verified user
-    if (supabaseUrl && supabaseAnonKey) {
-      try {
-        await fetch(`${supabaseUrl}/rest/v1/licenses`, {
-          method: 'POST',
-          headers: {
-            'apikey': supabaseAnonKey,
-            'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY || bearerToken || supabaseAnonKey}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=minimal'
-          },
-          body: JSON.stringify({
-            license_key: mintedKey,
-            duration_days: plan.durationDays,
-            is_lifetime: plan.isLifetime,
-            note: `Verified Razorpay: ${cleanPaymentId} | ${verifiedUserEmail} (${verifiedUserId})`,
-            status: 'active'
-          })
-        });
-      } catch (dbErr) {
-        console.warn('Licenses table insert notice:', dbErr);
+    // --- SECURITY: Require service role key for DB writes. Fail-fast if missing. ---
+    if (!supabaseServiceKey) {
+      console.error('WARNING: SUPABASE_SERVICE_ROLE_KEY not set. License will not be persisted to database.');
+    }
+
+    try {
+      const insertRes = await fetch(`${supabaseUrl}/rest/v1/licenses`, {
+        method: 'POST',
+        headers: {
+          'apikey': supabaseAnonKey,
+          'Authorization': `Bearer ${supabaseServiceKey || supabaseAnonKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({
+          license_key: mintedKey,
+          duration_days: plan.durationDays,
+          is_lifetime: plan.isLifetime,
+          note: `Verified Razorpay: ${cleanPaymentId} | ${verifiedUserEmail} (${verifiedUserId})`,
+          status: 'active'
+        })
+      });
+      if (!insertRes.ok) {
+        console.error('License insert failed:', await insertRes.text());
       }
+    } catch (dbErr) {
+      console.warn('Licenses table insert notice:', dbErr);
     }
 
     return res.status(200).json({

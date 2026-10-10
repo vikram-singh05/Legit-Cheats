@@ -18,11 +18,15 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const { signIn, signUp, loginWithServiceKey } = useAuth();
+  const { signIn, signUp } = useAuth();
   const navigate = useNavigate();
-  const redirectTarget = searchParams.get('redirect') || '/profile';
+  // --- SECURITY FIX (MED-04): Whitelist allowed redirect targets to prevent open redirect ---
+  const ALLOWED_REDIRECTS = ['/profile', '/', '/dashboard'];
+  const rawRedirect = searchParams.get('redirect') || '/profile';
+  const redirectTarget = ALLOWED_REDIRECTS.includes(rawRedirect) ? rawRedirect : '/profile';
   const planParam = searchParams.get('plan') || '';
-  const isRescueAllowed = searchParams.get('rescue') === 'true';
+  // --- SECURITY FIX (CRIT-03): Removed emergency rescue key login ---
+  // Admin access is exclusively through Supabase auth + profiles table role check
 
   // Anti-Brute-Force Rate Limiting State
   const [failCount, setFailCount] = useState(0);
@@ -51,13 +55,9 @@ export default function Login() {
     setSubmitting(true);
 
     try {
+      // --- SECURITY FIX (CRIT-03): Removed emergency service key login ---
       if (mode === 'emergency') {
-        if (!serviceKey.trim() || serviceKey.trim().length < 20) {
-          throw new Error('Please enter a valid Supabase Service Role Key');
-        }
-        await loginWithServiceKey(serviceKey.trim());
-        navigate('/dashboard');
-        return;
+        throw new Error('Emergency key login has been disabled for security. Use standard authentication.');
       }
 
       if (!email.trim() || !password) {

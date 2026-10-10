@@ -86,7 +86,8 @@ export function PurchaseProvider({ children }) {
     loadPurchases();
   }, [loadPurchases]);
 
-  // Persist purchases to localStorage & Supabase metadata strictly for authenticated user
+  // Persist purchases to localStorage only (SECURITY FIX MED-05: removed user_metadata sync)
+  // Purchases are stored server-side in the licenses table via /api/verify-payment
   const savePurchases = async (updatedPurchases) => {
     if (!user?.id) return;
     const sanitized = sanitizePurchases(updatedPurchases);
@@ -96,20 +97,9 @@ export function PurchaseProvider({ children }) {
     if (key) {
       localStorage.setItem(key, JSON.stringify(sanitized));
     }
-
-    try {
-      const verifiedOnes = sanitized.filter(p => p.status === 'verified' && isValidLicenseKey(p.key));
-      const activeKey = verifiedOnes.length > 0 ? verifiedOnes[verifiedOnes.length - 1].key : null;
-      await supabase.auth.updateUser({
-        data: {
-          purchases: sanitized,
-          has_purchased: verifiedOnes.length > 0,
-          active_key: activeKey
-        }
-      });
-    } catch (err) {
-      console.warn('Notice: Could not sync purchases to Supabase auth metadata:', err);
-    }
+    // --- SECURITY FIX (MED-05): Removed user_metadata.purchases sync ---
+    // Storing all purchases in auth metadata causes unlimited growth
+    // and potential token corruption. Licenses are persisted server-side.
   };
 
   // Derive active verified license with cryptographic validation
@@ -236,11 +226,16 @@ export function PurchaseProvider({ children }) {
     }
 
     // C. Check against remote Supabase licenses table bound to this user
+    // --- SECURITY FIX (HIGH-02): Strict input sanitization before .or() query ---
+    const safeInput = trimmedInput.replace(/[^a-zA-Z0-9_\-]/g, '');
+    if (safeInput.length < 4) {
+      throw new Error('Invalid reference format.');
+    }
     try {
       const { data: dbLicense, error: dbErr } = await supabase
         .from('licenses')
         .select('*')
-        .or(`note.ilike.%${trimmedInput}%,license_key.eq.${trimmedInput}`)
+        .or(`note.ilike.%${safeInput}%,license_key.eq.${safeInput}`)
         .eq('status', 'active')
         .maybeSingle();
 

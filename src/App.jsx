@@ -76,8 +76,8 @@ function ProtectedDashboard() {
             Logged in as <span style={{ color: '#fff', fontWeight: 600 }}>{user?.email}</span>. Your account does not have administrative privileges to manage licenses.
           </p>
           <div style={{ background: 'rgba(0,0,0,0.4)', borderRadius: '10px', padding: '0.9rem', border: '1px solid rgba(255,255,255,0.06)', marginBottom: '1.75rem', textAlign: 'left', fontSize: '0.8rem', color: '#a1a1aa' }}>
-            <p style={{ fontWeight: 600, color: '#e4e4e7', marginBottom: '0.25rem' }}>To elevate this account to Admin in Supabase SQL:</p>
-            <code style={{ color: '#00f0ff' }}>SELECT public.make_user_admin('{user?.email}');</code>
+            <p style={{ fontWeight: 600, color: '#e4e4e7', marginBottom: '0.25rem' }}>Need admin access?</p>
+            <span style={{ color: '#71717a' }}>Contact the site administrator to request elevated privileges for your account.</span>
           </div>
           <div className="flex gap-3 justify-center">
             <Link to="/" className="btn btn-primary">

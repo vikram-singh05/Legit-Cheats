@@ -89,8 +89,9 @@ export function getAppDownloadUrl() {
   if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_APP_DOWNLOAD_URL) {
     return import.meta.env.VITE_APP_DOWNLOAD_URL;
   }
-  const supabaseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) 
-    || 'https://lpeoqbfklmoeonctjist.supabase.co';
+  // --- SECURITY FIX (MED-01): No hardcoded URL fallback ---
+  const supabaseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) || '';
+  if (!supabaseUrl) return `/downloads/${APP_FILE_NAME}`;
   return `${supabaseUrl}/storage/v1/object/public/downloads/${APP_FILE_NAME}`;
 }
 

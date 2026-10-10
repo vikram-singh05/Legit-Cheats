@@ -35,7 +35,12 @@ export async function launchRazorpayPayment({ plan, user, onSuccess, onDismiss, 
     return;
   }
 
-  const razorpayKey = import.meta.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_1DP5mmOlF5G5ag';
+  // --- SECURITY FIX (CRIT-02): No hardcoded fallback key — must come from env ---
+  const razorpayKey = import.meta.env.VITE_RAZORPAY_KEY_ID;
+  if (!razorpayKey) {
+    if (onError) onError('Payment gateway is not configured. Please contact support.');
+    return;
+  }
 
   const options = {
     key: razorpayKey,
