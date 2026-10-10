@@ -275,6 +275,66 @@ export function PurchaseProvider({ children }) {
     );
   };
 
+  const redeemExternalKey = async (licenseKey) => {
+    if (!user) {
+      throw new Error('Authentication Required: Please sign in to redeem a license key.');
+    }
+
+    const cleanKey = (licenseKey || '').trim();
+    if (!isValidLicenseKey(cleanKey)) {
+      throw new Error('Invalid license key format. Expected format: LEGIT-XXXX-XXXX-XXXX');
+    }
+
+    const existingOrder = purchases.find(p => p.key === cleanKey);
+    if (existingOrder && existingOrder.status === 'verified') {
+      return existingOrder;
+    }
+
+    try {
+      const { data: dbLicense, error: dbErr } = await supabase
+        .from('licenses')
+        .select('*')
+        .eq('license_key', cleanKey)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (dbErr || !dbLicense) {
+        throw new Error('License key is invalid, already in use, or expired.');
+      }
+
+      // Infer plan from dbLicense
+      let matchedPlan = PRICING_PLANS.find(p => p.isLifetime === dbLicense.is_lifetime && p.durationDays === dbLicense.duration_days);
+      if (!matchedPlan) {
+        matchedPlan = PRICING_PLANS[2]; // fallback
+      }
+
+      const verifiedOrder = {
+        orderId: 'EXT-' + Math.floor(100000 + Math.random() * 900000),
+        planId: matchedPlan.id,
+        planName: matchedPlan.name,
+        price: matchedPlan.price,
+        amount: matchedPlan.amount,
+        durationDays: dbLicense.duration_days,
+        isLifetime: dbLicense.is_lifetime,
+        paymentMethod: 'external_key',
+        transactionRef: cleanKey,
+        status: 'verified',
+        verifiedAt: new Date().toISOString(),
+        userEmail: user.email,
+        userId: user.id,
+        key: dbLicense.license_key,
+        hwid: dbLicense.hwid || null
+      };
+
+      const updatedList = [verifiedOrder, ...purchases];
+      await savePurchases(updatedList);
+      return verifiedOrder;
+
+    } catch (checkErr) {
+      throw new Error(checkErr.message || 'Could not verify license key.');
+    }
+  };
+
   // Real App Client Download handler (strictly protected by verified license & auth check)
   const downloadApp = () => {
     if (!user || !hasPurchased) {
@@ -329,6 +389,7 @@ export function PurchaseProvider({ children }) {
         closeCheckout,
         createOrder,
         verifyPurchase,
+        redeemExternalKey,
         downloadApp,
         triggerDummyDownload: downloadApp,
         refreshPurchases: loadPurchases,

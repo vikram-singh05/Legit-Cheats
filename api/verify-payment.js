@@ -163,14 +163,17 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Security server failed to validate user credentials.' });
     }
 
-    const { payment_id, plan_id } = req.body || {};
+    const { razorpay_payment_id, razorpay_order_id, razorpay_signature, plan_id } = req.body || {};
 
     // 4. Strict Whitelist Sanitization of payment_id
-    if (!payment_id || typeof payment_id !== 'string') {
-      return res.status(400).json({ error: 'Missing payment_id parameter.' });
+    if (!razorpay_payment_id || typeof razorpay_payment_id !== 'string') {
+      return res.status(400).json({ error: 'Missing payment parameter.' });
+    }
+    if (!razorpay_order_id || !razorpay_signature) {
+      return res.status(400).json({ error: 'Missing Razorpay signature or order ID.' });
     }
 
-    const cleanPaymentId = payment_id.trim();
+    const cleanPaymentId = razorpay_payment_id.trim();
     if (!/^pay_[a-zA-Z0-9]{14,28}$/.test(cleanPaymentId)) {
       return res.status(400).json({ error: 'Invalid Razorpay payment ID format.' });
     }
@@ -227,7 +230,17 @@ export default async function handler(req, res) {
       console.warn('Anti-replay database query notice:', checkErr);
     }
 
-    // 8. Server-to-Server Razorpay API Verification
+    // 8. Server-to-Server Razorpay Signature Verification
+    const expectedSignature = crypto.createHmac('sha256', razorpayKeySecret)
+      .update(`${razorpay_order_id}|${cleanPaymentId}`)
+      .digest('hex');
+
+    if (expectedSignature !== razorpay_signature) {
+      console.error('Signature mismatch', { expectedSignature, received: razorpay_signature });
+      return res.status(400).json({ error: 'Cryptographic signature verification failed. Payment tampered.' });
+    }
+
+    // 8.1 Server-to-Server Razorpay API Verification
     const authHeaderEncoded = 'Basic ' + Buffer.from(`${razorpayKeyId}:${razorpayKeySecret}`).toString('base64');
 
     const razorpayRes = await fetch(`https://api.razorpay.com/v1/payments/${cleanPaymentId}`, {
@@ -240,7 +253,7 @@ export default async function handler(req, res) {
 
     if (!razorpayRes.ok) {
       console.error('Razorpay verification error:', await razorpayRes.text());
-      return res.status(400).json({ error: 'Payment verification failed. Please try again or contact support.' });
+      return res.status(400).json({ error: 'Payment verification failed.' });
     }
 
     const paymentData = await razorpayRes.json();

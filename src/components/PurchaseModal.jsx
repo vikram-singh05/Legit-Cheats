@@ -110,31 +110,57 @@ export default function PurchaseModal() {
     setRazorpayLoading(true);
     setErrorMsg('');
 
-    await launchRazorpayPayment({
-      plan: currentPlan,
-      user,
-      onSuccess: async (response) => {
-        setRazorpayLoading(false);
-        const paymentRef = response.razorpay_payment_id;
-        if (!paymentRef) {
-          setErrorMsg('Did not receive a valid payment ID from gateway.');
-          return;
-        }
-        setVerifiedPaymentRef(paymentRef);
-        await startVerificationPipeline(paymentRef, 'razorpay');
-      },
-      onDismiss: () => {
-        setRazorpayLoading(false);
-      },
-      onError: (errMsg) => {
-        setRazorpayLoading(false);
-        setErrorMsg(errMsg || 'Payment was cancelled or rejected by Razorpay.');
+    try {
+      // 1. Create Order on Backend (required for signature verification)
+      const token = (await supabase.auth.getSession()).data.session?.access_token;
+      const orderRes = await fetch('/api/create-order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ plan_id: currentPlan.id })
+      });
+
+      if (!orderRes.ok) {
+        throw new Error('Failed to generate secure order ID.');
       }
-    });
+      
+      const orderData = await orderRes.json();
+      const orderId = orderData.order_id;
+
+      await launchRazorpayPayment({
+        plan: currentPlan,
+        orderId,
+        user,
+        onSuccess: async (response) => {
+          setRazorpayLoading(false);
+          const paymentRef = response.razorpay_payment_id;
+          if (!paymentRef) {
+            setErrorMsg('Did not receive a valid payment ID from gateway.');
+            return;
+          }
+          setVerifiedPaymentRef(paymentRef);
+          // Pass full response for signature verification
+          await startVerificationPipeline(response, 'razorpay');
+        },
+        onDismiss: () => {
+          setRazorpayLoading(false);
+        },
+        onError: (errMsg) => {
+          setRazorpayLoading(false);
+          setErrorMsg(errMsg || 'Payment was cancelled or rejected by Razorpay.');
+        }
+      });
+    } catch (err) {
+      setRazorpayLoading(false);
+      setErrorMsg(err.message || 'Payment initialization failed.');
+    }
   };
 
   // Start verification process
-  const startVerificationPipeline = async (reference, method) => {
+  const startVerificationPipeline = async (paymentData, method) => {
+    const reference = typeof paymentData === 'string' ? paymentData : paymentData.razorpay_payment_id;
     setErrorMsg('');
     setCurrentStep('verifying');
     setVerificationProgress(20);
@@ -154,7 +180,8 @@ export default function PurchaseModal() {
       setVerificationStage(2);
 
       // Stage 2 & 3: Server-side API verification with Razorpay Basic Auth secret
-      const verifiedResult = await verifyPurchase(reference, currentPlan);
+      const verifyPayload = method === 'razorpay' ? paymentData : reference;
+      const verifiedResult = await verifyPurchase(verifyPayload, currentPlan);
       
       setVerificationProgress(85);
       setVerificationStage(3);

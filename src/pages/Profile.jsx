@@ -19,6 +19,7 @@ export default function Profile() {
     hasPurchased,
     openCheckout,
     verifyPurchase,
+    redeemExternalKey,
     downloadApp,
     appDownloadUrl,
     downloadNotice
@@ -35,6 +36,36 @@ export default function Profile() {
 
   // Key copy state
   const [copiedKey, setCopiedKey] = useState(false);
+
+  // External Key tool state
+  const [externalKeyInput, setExternalKeyInput] = useState('');
+  const [redeemingKey, setRedeemingKey] = useState(false);
+  const [redeemSuccess, setRedeemSuccess] = useState('');
+  const [redeemError, setRedeemError] = useState('');
+
+  const handleRedeemKey = async (e) => {
+    e.preventDefault();
+    const cleanInput = externalKeyInput.trim();
+    if (!cleanInput) {
+      setRedeemError('Please enter a valid license key.');
+      return;
+    }
+
+    setRedeemingKey(true);
+    setRedeemError('');
+    setRedeemSuccess('');
+
+    try {
+      await new Promise(r => setTimeout(r, 600));
+      const res = await redeemExternalKey(cleanInput);
+      setRedeemSuccess(`License Key redeemed successfully! Plan: ${res.planName}. You can now download the app.`);
+      setExternalKeyInput('');
+    } catch (err) {
+      setRedeemError(err.message || 'Could not redeem the provided license key.');
+    } finally {
+      setRedeemingKey(false);
+    }
+  };
 
   const handleCopyKey = (keyText) => {
     if (!keyText) return;
@@ -609,6 +640,126 @@ export default function Profile() {
               </motion.button>
             </div>
           )}
+        </motion.div>
+
+        {/* =========================================================================
+            SECTION 2.5: REDEEM EXTERNAL LICENSE KEY
+           ========================================================================= */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          className="card"
+          style={{
+            padding: '2rem',
+            marginBottom: '1.75rem',
+            background: 'rgba(12, 15, 24, 0.75)',
+            border: '1px solid rgba(255, 255, 255, 0.08)'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.75rem' }}>
+            <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(0, 136, 255, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Zap size={18} color="#00f0ff" />
+            </div>
+            <div>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#fff', margin: 0 }}>
+                Redeem External Key
+              </h2>
+              <span className="text-muted" style={{ fontSize: '0.8rem' }}>
+                Bought a key from a reseller? Enter it here to activate and download.
+              </span>
+            </div>
+          </div>
+
+          <p className="text-muted" style={{ fontSize: '0.85rem', marginBottom: '1.25rem', lineHeight: 1.5 }}>
+            If you purchased a license key from an external marketplace or reseller, paste your 
+            <code style={{ color: '#00f0ff', marginLeft: '4px', marginRight: '4px' }}>LEGIT-XXXX-XXXX-XXXX</code> 
+            key below to instantly claim your access and unlock the application download.
+          </p>
+
+          <form onSubmit={handleRedeemKey}>
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '1rem', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: '240px' }}>
+                <input
+                  type="text"
+                  placeholder="LEGIT-XXXX-XXXX-XXXX"
+                  value={externalKeyInput}
+                  onChange={(e) => setExternalKeyInput(e.target.value)}
+                  className="form-input"
+                  style={{ fontFamily: 'var(--font-mono)', width: '100%' }}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={redeemingKey}
+                className="btn btn-primary"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  padding: '9px 24px',
+                  borderRadius: '10px',
+                  fontSize: '0.88rem',
+                  fontWeight: 700,
+                  cursor: redeemingKey ? 'wait' : 'pointer'
+                }}
+              >
+                {redeemingKey ? (
+                  <>
+                    <RefreshCw size={15} className="spin" />
+                    <span>Verifying...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap size={16} />
+                    <span>Redeem Key</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {redeemSuccess && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                style={{
+                  background: 'rgba(16, 185, 129, 0.15)',
+                  border: '1px solid rgba(16, 185, 129, 0.35)',
+                  borderRadius: '10px',
+                  padding: '0.8rem 1rem',
+                  fontSize: '0.84rem',
+                  color: '#34d399',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}
+              >
+                <CheckCircle2 size={16} />
+                <span>{redeemSuccess}</span>
+              </motion.div>
+            )}
+
+            {redeemError && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                style={{
+                  background: 'rgba(239, 68, 68, 0.15)',
+                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                  borderRadius: '10px',
+                  padding: '0.8rem 1rem',
+                  fontSize: '0.84rem',
+                  color: '#f87171',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}
+              >
+                <AlertCircle size={16} />
+                <span>{redeemError}</span>
+              </motion.div>
+            )}
+          </form>
         </motion.div>
 
         {/* =========================================================================

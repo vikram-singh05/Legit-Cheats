@@ -1,6 +1,7 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig, loadEnv } from 'vite'
 import handler from './api/verify-payment.js'
+import createOrderHandler from './api/create-order.js'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -25,8 +26,9 @@ export default defineConfig(({ mode }) => {
       {
         name: 'api-server-middleware',
         configureServer(server) {
-          server.middlewares.use('/api/verify-payment', async (req, res) => {
-            if (req.method === 'POST') {
+          server.middlewares.use('/api', async (req, res) => {
+            const path = req.originalUrl || req.url;
+            if (path.startsWith('/api/verify-payment') && req.method === 'POST') {
               let body = ''
               req.on('data', (chunk) => {
                 body += chunk
@@ -50,6 +52,31 @@ export default defineConfig(({ mode }) => {
                   },
                 }
                 await handler(req, mockRes)
+              })
+            } else if (path.startsWith('/api/create-order') && req.method === 'POST') {
+              let body = ''
+              req.on('data', (chunk) => {
+                body += chunk
+              })
+              req.on('end', async () => {
+                try {
+                  req.body = JSON.parse(body || '{}')
+                } catch {
+                  req.body = {}
+                }
+                const mockRes = {
+                  setHeader: (k, v) => res.setHeader(k, v),
+                  status: (code) => {
+                    res.statusCode = code
+                    return {
+                      json: (data) => {
+                        res.setHeader('Content-Type', 'application/json')
+                        res.end(JSON.stringify(data))
+                      },
+                    }
+                  },
+                }
+                await createOrderHandler(req, mockRes)
               })
             } else {
               res.statusCode = 405

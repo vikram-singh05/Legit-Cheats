@@ -27,7 +27,7 @@ export function loadRazorpayScript() {
  * @param {Function} options.onSuccess - Callback on payment success (receives response)
  * @param {Function} options.onDismiss - Callback when checkout is closed without completing
  */
-export async function launchRazorpayPayment({ plan, user, onSuccess, onDismiss, onError }) {
+export async function launchRazorpayPayment({ plan, orderId, user, onSuccess, onDismiss, onError }) {
   const isLoaded = await loadRazorpayScript();
 
   if (!isLoaded) {
@@ -46,6 +46,7 @@ export async function launchRazorpayPayment({ plan, user, onSuccess, onDismiss, 
     key: razorpayKey,
     amount: plan.amount * 100, // Amount in paise (1 INR = 100 paise)
     currency: 'INR',
+    order_id: orderId,
     name: 'LEGIT CHEATS',
     description: `${plan.name} - Kernel Hypervisor License`,
     image: '/logo-diamond.png',
