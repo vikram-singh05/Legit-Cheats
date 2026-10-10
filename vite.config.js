@@ -2,6 +2,7 @@ import react from '@vitejs/plugin-react'
 import { defineConfig, loadEnv } from 'vite'
 import handler from './api/verify-payment.js'
 import createOrderHandler from './api/create-order.js'
+import redeemKeyHandler from './api/redeem-key.js'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -77,6 +78,31 @@ export default defineConfig(({ mode }) => {
                   },
                 }
                 await createOrderHandler(req, mockRes)
+              })
+            } else if (path.startsWith('/api/redeem-key') && req.method === 'POST') {
+              let body = ''
+              req.on('data', (chunk) => {
+                body += chunk
+              })
+              req.on('end', async () => {
+                try {
+                  req.body = JSON.parse(body || '{}')
+                } catch {
+                  req.body = {}
+                }
+                const mockRes = {
+                  setHeader: (k, v) => res.setHeader(k, v),
+                  status: (code) => {
+                    res.statusCode = code
+                    return {
+                      json: (data) => {
+                        res.setHeader('Content-Type', 'application/json')
+                        res.end(JSON.stringify(data))
+                      },
+                    }
+                  },
+                }
+                await redeemKeyHandler(req, mockRes)
               })
             } else {
               res.statusCode = 405
