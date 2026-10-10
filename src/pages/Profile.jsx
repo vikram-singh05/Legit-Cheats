@@ -43,6 +43,22 @@ export default function Profile() {
   const [redeemSuccess, setRedeemSuccess] = useState('');
   const [redeemError, setRedeemError] = useState('');
 
+  const [fileSize, setFileSize] = useState('1.92 MB');
+
+  useEffect(() => {
+    if (appDownloadUrl) {
+      fetch(appDownloadUrl, { method: 'HEAD' })
+        .then(res => {
+          const size = res.headers.get('content-length');
+          if (size) {
+            const mb = (parseInt(size, 10) / (1024 * 1024)).toFixed(2);
+            setFileSize(`${mb} MB`);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [appDownloadUrl]);
+
   const handleRedeemKey = async (e) => {
     e.preventDefault();
     const cleanInput = externalKeyInput.trim();
@@ -538,7 +554,7 @@ export default function Profile() {
                     {APP_FILE_NAME}
                   </div>
                   <div style={{ fontSize: '0.8rem', color: '#8e92a4', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span>Size: <strong>24.6 MB</strong></span>
+                    <span>Size: <strong>{fileSize}</strong></span>
                     <span>OS: <strong>Windows 10 / 11 (64-bit)</strong></span>
                     <span>Host: <strong style={{ color: '#00f0ff' }}>Supabase Cloud Storage</strong></span>
                     <span>Status: <strong style={{ color: '#10b981' }}>Undetected & Active</strong></span>
