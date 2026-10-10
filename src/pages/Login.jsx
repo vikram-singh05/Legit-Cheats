@@ -1,11 +1,14 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, Key, ShieldCheck, ArrowRight, AlertCircle, CheckCircle2, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
-  const [mode, setMode] = useState('signin'); // 'signin' | 'signup' | 'emergency'
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const initialMode = searchParams.get('mode') === 'signup' ? 'signup' : 'signin';
+  const [mode, setMode] = useState(initialMode); // 'signin' | 'signup' | 'emergency'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -17,6 +20,17 @@ export default function Login() {
 
   const { signIn, signUp, loginWithServiceKey } = useAuth();
   const navigate = useNavigate();
+  const redirectTarget = searchParams.get('redirect') || '/profile';
+  const planParam = searchParams.get('plan') || '';
+
+  const handlePostAuthRedirect = () => {
+    if (redirectTarget === 'checkout') {
+      const pendingPlan = planParam || sessionStorage.getItem('legit_pending_plan') || '';
+      navigate(pendingPlan ? `/?checkout=${pendingPlan}` : '/');
+    } else {
+      navigate(redirectTarget);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,7 +43,7 @@ export default function Login() {
         if (!serviceKey.trim() || serviceKey.trim().length < 20) {
           throw new Error('Please enter a valid Supabase Service Role Key');
         }
-        loginWithServiceKey(serviceKey.trim());
+        await loginWithServiceKey(serviceKey.trim());
         navigate('/dashboard');
         return;
       }
@@ -50,7 +64,7 @@ export default function Login() {
         if (data.session) {
           setSuccessMsg('Account created successfully! Redirecting...');
           setTimeout(() => {
-            navigate('/');
+            handlePostAuthRedirect();
           }, 1000);
         } else {
           setSuccessMsg('Account registered! If confirmation is required, check your email.');
@@ -61,8 +75,7 @@ export default function Login() {
         const res = await signIn(email.trim(), password);
         setSuccessMsg('Welcome back!');
         setTimeout(() => {
-          // If the signed in user is an admin, navigate to dashboard, else home
-          navigate('/');
+          handlePostAuthRedirect();
         }, 800);
       }
     } catch (err) {
@@ -517,7 +530,7 @@ export default function Login() {
               >
                 <div className="form-group" style={{ marginBottom: '1.5rem' }}>
                   <label className="form-label" style={{ fontSize: '0.85rem', color: '#c4c4cc', marginBottom: '0.4rem' }}>
-                    Supabase Service Role Key (Admin Bypass)
+                    Cryptographic Service Role Key (Administrator Authentication)
                   </label>
                   <div style={{ position: 'relative' }}>
                     <motion.div

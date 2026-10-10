@@ -1,12 +1,16 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence, useInView } from 'framer-motion';
 import {
   Crosshair, Shield, Cpu, Code2, Zap, Lock, Eye, Monitor,
   Gauge, Radio, Sliders, ChevronDown, Check, Sparkles, Terminal,
-  Compass, ArrowRight, Layers, Flame, RefreshCw, Server
+  Compass, ArrowRight, Layers, Flame, RefreshCw, Server,
+  Download, Key, CheckCircle2
 } from 'lucide-react';
 import GtaSimulator from '../components/GtaSimulator';
+import { PRICING_PLANS } from '../lib/plans';
+import { usePurchase } from '../context/PurchaseContext';
+import { useAuth } from '../context/AuthContext';
 
 
 /* ─── Reusable Animated Section Wrapper ─── */
@@ -140,67 +144,6 @@ const FEATURES_DATA = [
   },
 ];
 
-const PRICING_PLANS = [
-  {
-    name: '1-Day Access',
-    price: '₹50',
-    period: '24 Hours',
-    badge: null,
-    popular: false,
-    features: [
-      'Full Kernel Aimbot & ESP Suite',
-      'OBS & Discord Streamproof Guard',
-      'Instant Automated Key Delivery',
-      '1 Concurrent PC Hardware Binding',
-      'Community Discord Support'
-    ]
-  },
-  {
-    name: '7-Day Pass',
-    price: '₹130',
-    period: '1 Week',
-    badge: null,
-    popular: false,
-    features: [
-      'All 1-Day Features Included',
-      'Priority Kernel Driver Updates',
-      '1 Free HWID Reset Allowance',
-      'Cloud Config Profile Sync',
-      'Standard Support Ticket Priority'
-    ]
-  },
-  {
-    name: '30-Day Pro',
-    price: '₹600',
-    period: '1 Month',
-    badge: 'MOST POPULAR',
-    popular: true,
-    features: [
-      'Complete Software Suite Access',
-      'Exclusive Polymorphic Builds',
-      'Instant Automated HWID Reset',
-      'Unlimited Cloud Preset Slots',
-      'Private VIP Discord Role & Chat',
-      'Early Access to Feature Betas'
-    ]
-  },
-  {
-    name: 'Lifetime Elite',
-    price: '₹2000',
-    period: 'Permanent Access',
-    badge: 'BEST VALUE',
-    popular: false,
-    features: [
-      'Never Pay Again — Lifetime Access',
-      'Direct Developer Contact Access',
-      'Zero Queue HWID Reset Portal',
-      'Custom Unique Binary Compilations',
-      'All Future Expansions Included',
-      'VIP Lounge & Priority Alpha Testing'
-    ]
-  }
-];
-
 const FAQS = [
   {
     q: 'How fast is delivery after acquiring a license key?',
@@ -246,6 +189,26 @@ const staggerItem = {
 export default function PublicSite() {
   const [activeCategory, setActiveCategory] = useState('all');
   const [activeFaq, setActiveFaq] = useState(null);
+
+  // Auth and Purchase integration
+  const { user } = useAuth();
+  const { hasPurchased, activeLicense, openCheckout, triggerDummyDownload } = usePurchase();
+
+  // Resume checkout flow seamlessly when returning from login
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const checkoutParam = searchParams.get('checkout');
+    const pendingPlanId = checkoutParam || sessionStorage.getItem('legit_pending_plan');
+    if (pendingPlanId && user) {
+      const foundPlan = PRICING_PLANS.find(p => p.id === pendingPlanId);
+      if (foundPlan) {
+        openCheckout(foundPlan);
+        sessionStorage.removeItem('legit_pending_plan');
+        const cleanPath = window.location.pathname;
+        window.history.replaceState({}, document.title, cleanPath);
+      }
+    }
+  }, [user, openCheckout]);
 
   // Live Interactive HUD Demo States
   const [demoAim, setDemoAim] = useState(true);
@@ -312,12 +275,39 @@ export default function PublicSite() {
             style={{
               fontSize: 'clamp(1rem, 1.8vw, 1.2rem)',
               maxWidth: '640px',
-              margin: '0 auto 2rem',
+              margin: '0 auto 1.5rem',
               lineHeight: 1.6
             }}
           >
             Engineered with hardware virtualization, sub-tick predictive vector aim, and 100% streamproof overlays. Dominate every server with absolute reliability.
           </motion.p>
+
+          {/* Active License Banner if Purchased */}
+          {hasPurchased && (
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              style={{
+                marginBottom: '1.5rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.65rem',
+                padding: '7px 16px',
+                borderRadius: '9999px',
+                background: 'rgba(16, 185, 129, 0.12)',
+                border: '1px solid rgba(16, 185, 129, 0.35)',
+                color: '#34d399',
+                fontSize: '0.84rem',
+                fontWeight: 600
+              }}
+            >
+              <CheckCircle2 size={16} />
+              <span>Active {activeLicense?.planName || 'License'} Connected</span>
+              <Link to="/profile" style={{ color: '#00f0ff', textDecoration: 'underline', marginLeft: '4px' }}>
+                View Key in Profile
+              </Link>
+            </motion.div>
+          )}
 
           {/* Hero Action Buttons */}
           <motion.div
@@ -326,36 +316,87 @@ export default function PublicSite() {
             transition={{ duration: 0.6, delay: 0.35 }}
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.875rem', flexWrap: 'wrap', marginBottom: '3rem' }}
           >
-            <motion.a
-              href="#products"
-              className="btn btn-primary"
-              whileHover={{ scale: 1.04, y: -2 }}
-              whileTap={{ scale: 0.97 }}
-              style={{
-                padding: '0.85rem 2.2rem',
-                fontSize: '0.96rem',
-                borderRadius: '12px',
-                boxShadow: '0 8px 25px rgba(0, 136, 255, 0.4)'
-              }}
-            >
-              <Sparkles size={16} />
-              <span>Get Instant Access</span>
-            </motion.a>
+            {hasPurchased ? (
+              <>
+                <motion.button
+                  onClick={triggerDummyDownload}
+                  className="btn btn-primary"
+                  whileHover={{ scale: 1.04, y: -2 }}
+                  whileTap={{ scale: 0.97 }}
+                  style={{
+                    padding: '0.85rem 2.2rem',
+                    fontSize: '0.96rem',
+                    borderRadius: '12px',
+                    boxShadow: '0 8px 25px rgba(0, 136, 255, 0.4)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.55rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <Download size={18} />
+                  <span>Download App Client</span>
+                </motion.button>
 
-            <motion.a
-              href="#features"
-              className="btn btn-outline"
-              whileHover={{ scale: 1.04, y: -2 }}
-              whileTap={{ scale: 0.97 }}
-              style={{
-                padding: '0.85rem 2rem',
-                fontSize: '0.96rem',
-                borderRadius: '12px'
-              }}
-            >
-              <span>Explore 12+ Features</span>
-              <ArrowRight size={16} />
-            </motion.a>
+                <motion.div whileHover={{ scale: 1.04, y: -2 }} whileTap={{ scale: 0.97 }}>
+                  <Link
+                    to="/profile"
+                    className="btn btn-outline"
+                    style={{
+                      padding: '0.85rem 2rem',
+                      fontSize: '0.96rem',
+                      borderRadius: '12px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.45rem'
+                    }}
+                  >
+                    <Key size={16} />
+                    <span>View License Key</span>
+                  </Link>
+                </motion.div>
+              </>
+            ) : (
+              <>
+                <motion.button
+                  onClick={() => openCheckout(PRICING_PLANS[2])}
+                  className="btn btn-primary"
+                  whileHover={{ scale: 1.04, y: -2 }}
+                  whileTap={{ scale: 0.97 }}
+                  style={{
+                    padding: '0.85rem 2.2rem',
+                    fontSize: '0.96rem',
+                    borderRadius: '12px',
+                    boxShadow: '0 8px 25px rgba(0, 136, 255, 0.4)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <Sparkles size={16} />
+                  <span>Get Instant Access</span>
+                </motion.button>
+
+                <motion.a
+                  href="#products"
+                  className="btn btn-outline"
+                  whileHover={{ scale: 1.04, y: -2 }}
+                  whileTap={{ scale: 0.97 }}
+                  style={{
+                    padding: '0.85rem 2rem',
+                    fontSize: '0.96rem',
+                    borderRadius: '12px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.45rem'
+                  }}
+                >
+                  <span>Explore Pricing</span>
+                  <ArrowRight size={16} />
+                </motion.a>
+              </>
+            )}
           </motion.div>
 
           {/* Quick Metrics Bar */}
@@ -899,19 +940,25 @@ export default function PublicSite() {
                 </div>
 
                 <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
-                  <Link
-                    to="/login"
+                  <button
+                    onClick={() => openCheckout(plan)}
                     className={plan.popular ? "btn btn-primary" : "btn btn-outline"}
                     style={{
                       width: '100%',
                       padding: '0.75rem',
                       borderRadius: '10px',
-                      fontSize: '0.88rem'
+                      fontSize: '0.88rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '0.45rem'
                     }}
                   >
-                    <span>Select Plan</span>
+                    <Sparkles size={15} />
+                    <span>Buy Now</span>
                     <ArrowRight size={15} />
-                  </Link>
+                  </button>
                 </motion.div>
               </motion.div>
             ))}
