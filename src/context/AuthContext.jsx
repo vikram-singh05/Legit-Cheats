@@ -156,6 +156,25 @@ export function AuthProvider({ children }) {
     setIsAdmin(false);
   };
 
+  // --- SECURITY: Send password reset link to user's registered email ---
+  const resetPassword = async (email) => {
+    const cleanEmail = email.trim().toLowerCase();
+    const { data, error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+      redirectTo: `${window.location.origin}/login?mode=reset-password`,
+    });
+    if (error) throw error;
+    return data;
+  };
+
+  // --- SECURITY: Update password for authenticated or recovery session ---
+  const updatePassword = async (newPassword) => {
+    const { data, error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+    if (error) throw error;
+    return data;
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -167,6 +186,8 @@ export function AuthProvider({ children }) {
         signIn,
         signUp,
         signOut,
+        resetPassword,
+        updatePassword,
         // --- SECURITY FIX (CRIT-03): Removed loginWithServiceKey from context ---
         // Admin access is now exclusively through Supabase auth + profile role
         refreshProfile: () => fetchProfileAndRole(user),

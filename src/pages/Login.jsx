@@ -1,36 +1,97 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mail, Lock, Key, ShieldCheck, ArrowRight, AlertCircle, CheckCircle2, ChevronRight, Eye, EyeOff } from 'lucide-react';
+import {
+  Mail,
+  Lock,
+  ShieldCheck,
+  ArrowRight,
+  ArrowLeft,
+  AlertCircle,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Sparkles
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 export default function Login() {
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
-  const initialMode = searchParams.get('mode') === 'signup' ? 'signup' : 'signin';
-  const [mode, setMode] = useState(initialMode); // 'signin' | 'signup' | 'emergency'
+
+  // Determine initial mode based on query params or URL hash
+  const determineInitialMode = () => {
+    const modeParam = searchParams.get('mode');
+    const hash = location.hash || '';
+    if (modeParam === 'reset-password' || hash.includes('type=recovery')) {
+      return 'reset-password';
+    }
+    if (modeParam === 'forgot') return 'forgot';
+    if (modeParam === 'signup') return 'signup';
+    return 'signin';
+  };
+
+  const [mode, setMode] = useState(determineInitialMode); // 'signin' | 'signup' | 'forgot' | 'reset-password'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [serviceKey, setServiceKey] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+
+  const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
+
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
 
-  const { signIn, signUp } = useAuth();
+  // Anti-Brute-Force Rate Limiting State
+  const [failCount, setFailCount] = useState(0);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+
+  // Password Reset Email Rate Limiting (60s cooldown)
+  const [resetCooldown, setResetCooldown] = useState(0);
+
+  const { signIn, signUp, resetPassword, updatePassword } = useAuth();
   const navigate = useNavigate();
+
   // --- SECURITY FIX (MED-04): Whitelist allowed redirect targets to prevent open redirect ---
   const ALLOWED_REDIRECTS = ['/profile', '/', '/dashboard'];
   const rawRedirect = searchParams.get('redirect') || '/profile';
   const redirectTarget = ALLOWED_REDIRECTS.includes(rawRedirect) ? rawRedirect : '/profile';
   const planParam = searchParams.get('plan') || '';
-  // --- SECURITY FIX (CRIT-03): Removed emergency rescue key login ---
-  // Admin access is exclusively through Supabase auth + profiles table role check
 
-  // Anti-Brute-Force Rate Limiting State
-  const [failCount, setFailCount] = useState(0);
-  const [cooldownUntil, setCooldownUntil] = useState(0);
+  // Listen for Supabase password recovery events or hash change
+  useEffect(() => {
+    if (location.hash.includes('type=recovery') || searchParams.get('mode') === 'reset-password') {
+      setMode('reset-password');
+      setError('');
+    }
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setMode('reset-password');
+        setError('');
+        setSuccessMsg('Security verified. You can now set your new account password.');
+      }
+    });
+
+    return () => {
+      subscription?.unsubscribe?.();
+    };
+  }, [location.hash, location.search]);
+
+  // Countdown timer for reset email cooldown
+  useEffect(() => {
+    if (resetCooldown <= 0) return;
+    const interval = setInterval(() => {
+      setResetCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [resetCooldown]);
 
   const handlePostAuthRedirect = () => {
     if (redirectTarget === 'checkout') {
@@ -44,6 +105,7 @@ export default function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    // Enforce lockouts from consecutive failures
     if (Date.now() < cooldownUntil) {
       const waitSec = Math.ceil((cooldownUntil - Date.now()) / 1000);
       setError(`Security Alert: Too many failed attempts. Cooldown active for ${waitSec} seconds.`);
@@ -55,24 +117,70 @@ export default function Login() {
     setSubmitting(true);
 
     try {
-      // --- SECURITY FIX (CRIT-03): Removed emergency service key login ---
-      if (mode === 'emergency') {
-        throw new Error('Emergency key login has been disabled for security. Use standard authentication.');
+      const cleanEmail = email.trim().toLowerCase();
+
+      /* ──────────────────────────
+         MODE: FORGOT PASSWORD
+      ────────────────────────── */
+      if (mode === 'forgot') {
+        if (!cleanEmail) {
+          throw new Error('Please enter your email address.');
+        }
+        if (resetCooldown > 0) {
+          throw new Error(`Please wait ${resetCooldown} seconds before requesting another recovery email.`);
+        }
+
+        try {
+          await resetPassword(cleanEmail);
+        } catch (err) {
+          // Log internally for debugging, but preserve neutral messaging against user enumeration
+          console.warn('Password recovery request status:', err?.message || err);
+        }
+
+        // Anti-enumeration: neutral response regardless of whether email exists
+        setSuccessMsg(
+          'If an account exists with this email, a secure password recovery link has been dispatched via legitcheats.live.'
+        );
+        setResetCooldown(60); // 60s cooldown
+        return;
       }
 
-      if (!email.trim() || !password) {
-        throw new Error('Please fill in both email and password');
+      /* ──────────────────────────
+         MODE: RESET NEW PASSWORD
+      ────────────────────────── */
+      if (mode === 'reset-password') {
+        if (!newPassword || newPassword.length < 6) {
+          throw new Error('New password must be at least 6 characters long.');
+        }
+        if (newPassword !== confirmNewPassword) {
+          throw new Error('Passwords do not match.');
+        }
+
+        await updatePassword(newPassword);
+        setSuccessMsg('Your password has been successfully updated! Redirecting...');
+        setNewPassword('');
+        setConfirmNewPassword('');
+        setTimeout(() => {
+          handlePostAuthRedirect();
+        }, 1500);
+        return;
       }
 
+      /* ──────────────────────────
+         MODE: SIGN UP
+      ────────────────────────── */
       if (mode === 'signup') {
+        if (!cleanEmail || !password) {
+          throw new Error('Please fill in both email and password.');
+        }
         if (password.length < 6) {
-          throw new Error('Password must be at least 6 characters long');
+          throw new Error('Password must be at least 6 characters long.');
         }
         if (password !== confirmPassword) {
-          throw new Error('Passwords do not match');
+          throw new Error('Passwords do not match.');
         }
-        const data = await signUp(email.trim(), password);
-        // Supabase might require email confirmation or log user in immediately
+
+        const data = await signUp(cleanEmail, password);
         if (data.session) {
           setSuccessMsg('Account created successfully! Redirecting...');
           setTimeout(() => {
@@ -82,9 +190,18 @@ export default function Login() {
           setSuccessMsg('Account registered! If confirmation is required, check your email.');
           setMode('signin');
         }
-      } else {
-        // Sign in
-        const res = await signIn(email.trim(), password);
+        return;
+      }
+
+      /* ──────────────────────────
+         MODE: SIGN IN
+      ────────────────────────── */
+      if (mode === 'signin') {
+        if (!cleanEmail || !password) {
+          throw new Error('Please fill in both email and password.');
+        }
+
+        await signIn(cleanEmail, password);
         setSuccessMsg('Welcome back!');
         setTimeout(() => {
           handlePostAuthRedirect();
@@ -93,12 +210,15 @@ export default function Login() {
     } catch (err) {
       console.error(err);
       setError(err.message || 'Authentication failed. Please verify your credentials.');
-      const newFails = failCount + 1;
-      setFailCount(newFails);
-      if (newFails >= 5) {
-        setCooldownUntil(Date.now() + 30000); // 30 second lockdown
-        setError('Security Alert: 5 consecutive failed attempts. Authentication locked for 30 seconds.');
-        setFailCount(0);
+
+      if (mode === 'signin' || mode === 'reset-password') {
+        const newFails = failCount + 1;
+        setFailCount(newFails);
+        if (newFails >= 5) {
+          setCooldownUntil(Date.now() + 30000); // 30-second security lockdown
+          setError('Security Alert: 5 consecutive failed attempts. Authentication locked for 30 seconds.');
+          setFailCount(0);
+        }
       }
     } finally {
       setSubmitting(false);
@@ -127,7 +247,17 @@ export default function Login() {
   };
 
   return (
-    <div className="login-page-container" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '100px 1.5rem 3rem', position: 'relative' }}>
+    <div
+      className="login-page-container"
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '100px 1.5rem 3rem',
+        position: 'relative'
+      }}
+    >
       {/* Background radial atmosphere */}
       <motion.div
         className="bg-glow"
@@ -142,8 +272,8 @@ export default function Login() {
           key={i}
           animate={{
             y: [0, -30, 0],
-            x: [0, (i % 2 === 0 ? 15 : -15), 0],
-            opacity: [0.15, 0.35, 0.15],
+            x: [0, i % 2 === 0 ? 15 : -15, 0],
+            opacity: [0.15, 0.35, 0.15]
           }}
           transition={{ duration: 3 + i * 0.5, repeat: Infinity, delay: i * 0.4, ease: 'easeInOut' }}
           style={{
@@ -169,10 +299,11 @@ export default function Login() {
           width: '100%',
           maxWidth: '460px',
           padding: '2.5rem 2rem',
-          background: 'rgba(12, 14, 20, 0.75)',
+          background: 'rgba(12, 14, 20, 0.78)',
           border: '1px solid rgba(255, 255, 255, 0.08)',
           boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.7), 0 0 35px rgba(0, 136, 255, 0.1)',
           backdropFilter: 'blur(30px)',
+          WebkitBackdropFilter: 'blur(30px)',
           borderRadius: '24px',
           position: 'relative',
           zIndex: 10
@@ -188,11 +319,11 @@ export default function Login() {
                 boxShadow: [
                   '0 0 15px rgba(0, 136, 255, 0.2)',
                   '0 0 30px rgba(0, 136, 255, 0.4)',
-                  '0 0 15px rgba(0, 136, 255, 0.2)',
+                  '0 0 15px rgba(0, 136, 255, 0.2)'
                 ]
               }}
               transition={{
-                boxShadow: { duration: 2.5, repeat: Infinity, ease: 'easeInOut' },
+                boxShadow: { duration: 2.5, repeat: Infinity, ease: 'easeInOut' }
               }}
               style={{
                 width: '64px',
@@ -225,7 +356,8 @@ export default function Login() {
             >
               {mode === 'signin' && 'Welcome Back'}
               {mode === 'signup' && 'Create Your Account'}
-              {mode === 'emergency' && 'Admin Master Key'}
+              {mode === 'forgot' && 'Reset Password'}
+              {mode === 'reset-password' && 'Set New Password'}
             </motion.h2>
           </AnimatePresence>
 
@@ -241,89 +373,129 @@ export default function Login() {
             >
               {mode === 'signin' && 'Sign in to access your dashboard and active licenses'}
               {mode === 'signup' && 'Join LEGIT and unleash hyper-tuned performance'}
-              {mode === 'emergency' && 'Authenticate using direct Supabase Service Role Key'}
+              {mode === 'forgot' && 'Enter your registered email to receive a secure recovery link'}
+              {mode === 'reset-password' && 'Choose a strong, secure new password for your account'}
             </motion.p>
           </AnimatePresence>
         </motion.div>
 
-        {/* Tab switchers */}
-        <motion.div
-          variants={itemVariants}
-          style={{
-            display: 'flex',
-            background: 'rgba(5, 7, 12, 0.8)',
-            padding: '4px',
-            borderRadius: '12px',
-            border: '1px solid rgba(255, 255, 255, 0.06)',
-            marginBottom: '1.75rem',
-            position: 'relative'
-          }}
-        >
-          {/* Animated background slider */}
+        {/* Tab switchers OR Back button */}
+        {mode === 'forgot' || mode === 'reset-password' ? (
           <motion.div
-            layout
-            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+            variants={itemVariants}
+            style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'flex-start' }}
+          >
+            <motion.button
+              type="button"
+              whileHover={{ x: -3 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => {
+                setMode('signin');
+                setError('');
+                setSuccessMsg('');
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--color-muted-foreground)',
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                padding: '4px 0',
+                transition: 'color 0.2s ease'
+              }}
+            >
+              <ArrowLeft size={16} />
+              <span>Back to Sign In</span>
+            </motion.button>
+          </motion.div>
+        ) : (
+          <motion.div
+            variants={itemVariants}
             style={{
-              position: 'absolute',
-              top: '4px',
-              left: mode === 'signin' ? '4px' : 'calc(50% + 0px)',
-              width: 'calc(50% - 4px)',
-              height: 'calc(100% - 8px)',
-              background: 'rgba(0, 136, 255, 0.2)',
-              borderRadius: '8px',
-              display: mode === 'emergency' ? 'none' : 'block',
-              zIndex: 0
-            }}
-          />
-          <motion.button
-            type="button"
-            onClick={() => { setMode('signin'); setError(''); }}
-            variants={tabVariants}
-            animate={mode === 'signin' ? 'active' : 'inactive'}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            style={{
-              flex: 1,
-              padding: '8px 0',
-              borderRadius: '8px',
-              border: 'none',
-              background: 'transparent',
-              color: mode === 'signin' ? '#fff' : 'var(--color-muted-foreground)',
-              fontSize: '0.88rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'color 0.25s ease',
-              position: 'relative',
-              zIndex: 1
+              display: 'flex',
+              background: 'rgba(5, 7, 12, 0.8)',
+              padding: '4px',
+              borderRadius: '12px',
+              border: '1px solid rgba(255, 255, 255, 0.06)',
+              marginBottom: '1.75rem',
+              position: 'relative'
             }}
           >
-            Sign In
-          </motion.button>
-          <motion.button
-            type="button"
-            onClick={() => { setMode('signup'); setError(''); }}
-            variants={tabVariants}
-            animate={mode === 'signup' ? 'active' : 'inactive'}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            style={{
-              flex: 1,
-              padding: '8px 0',
-              borderRadius: '8px',
-              border: 'none',
-              background: 'transparent',
-              color: mode === 'signup' ? '#fff' : 'var(--color-muted-foreground)',
-              fontSize: '0.88rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'color 0.25s ease',
-              position: 'relative',
-              zIndex: 1
-            }}
-          >
-            Register
-          </motion.button>
-        </motion.div>
+            <motion.div
+              layout
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+              style={{
+                position: 'absolute',
+                top: '4px',
+                left: mode === 'signin' ? '4px' : 'calc(50% + 0px)',
+                width: 'calc(50% - 4px)',
+                height: 'calc(100% - 8px)',
+                background: 'rgba(0, 136, 255, 0.2)',
+                borderRadius: '8px',
+                zIndex: 0
+              }}
+            />
+            <motion.button
+              type="button"
+              onClick={() => {
+                setMode('signin');
+                setError('');
+                setSuccessMsg('');
+              }}
+              variants={tabVariants}
+              animate={mode === 'signin' ? 'active' : 'inactive'}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              style={{
+                flex: 1,
+                padding: '8px 0',
+                borderRadius: '8px',
+                border: 'none',
+                background: 'transparent',
+                color: mode === 'signin' ? '#fff' : 'var(--color-muted-foreground)',
+                fontSize: '0.88rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'color 0.25s ease',
+                position: 'relative',
+                zIndex: 1
+              }}
+            >
+              Sign In
+            </motion.button>
+            <motion.button
+              type="button"
+              onClick={() => {
+                setMode('signup');
+                setError('');
+                setSuccessMsg('');
+              }}
+              variants={tabVariants}
+              animate={mode === 'signup' ? 'active' : 'inactive'}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              style={{
+                flex: 1,
+                padding: '8px 0',
+                borderRadius: '8px',
+                border: 'none',
+                background: 'transparent',
+                color: mode === 'signup' ? '#fff' : 'var(--color-muted-foreground)',
+                fontSize: '0.88rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'color 0.25s ease',
+                position: 'relative',
+                zIndex: 1
+              }}
+            >
+              Register
+            </motion.button>
+          </motion.div>
+        )}
 
         {/* Feedback alerts */}
         <AnimatePresence mode="wait">
@@ -346,12 +518,7 @@ export default function Login() {
                 marginBottom: '1.25rem'
               }}
             >
-              <motion.div
-                animate={{ rotate: [0, 10, -10, 0] }}
-                transition={{ duration: 0.4 }}
-              >
-                <AlertCircle size={18} style={{ flexShrink: 0 }} />
-              </motion.div>
+              <AlertCircle size={18} style={{ flexShrink: 0 }} />
               <span>{error}</span>
             </motion.div>
           )}
@@ -372,15 +539,11 @@ export default function Login() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.6rem',
-                marginBottom: '1.25rem'
+                marginBottom: '1.25rem',
+                lineHeight: '1.45'
               }}
             >
-              <motion.div
-                animate={{ scale: [1, 1.2, 1] }}
-                transition={{ duration: 0.4 }}
-              >
-                <CheckCircle2 size={18} style={{ flexShrink: 0 }} />
-              </motion.div>
+              <CheckCircle2 size={18} style={{ flexShrink: 0 }} />
               <span>{successMsg}</span>
             </motion.div>
           )}
@@ -388,207 +551,291 @@ export default function Login() {
 
         {/* Authentication Form */}
         <form onSubmit={handleSubmit}>
-          <AnimatePresence mode="wait">
-            {mode !== 'emergency' ? (
-              <motion.div
-                key="email-form"
-                initial={{ opacity: 0, x: -15 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 15 }}
-                transition={{ duration: 0.3 }}
-              >
+          {/* Email input for signin, signup, forgot */}
+          {mode !== 'reset-password' && (
+            <motion.div
+              variants={itemVariants}
+              className="form-group"
+              style={{ marginBottom: '1.2rem' }}
+            >
+              <label className="form-label" style={{ fontSize: '0.85rem', color: '#c4c4cc', marginBottom: '0.4rem', display: 'block' }}>
+                Email Address
+              </label>
+              <div style={{ position: 'relative' }}>
                 <motion.div
-                  variants={itemVariants}
-                  className="form-group"
-                  style={{ marginBottom: '1.2rem' }}
+                  animate={{ color: email ? '#0088ff' : '#71717a' }}
+                  style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: '14px', zIndex: 1 }}
                 >
-                  <label className="form-label" style={{ fontSize: '0.85rem', color: '#c4c4cc', marginBottom: '0.4rem' }}>
-                    Email Address
-                  </label>
-                  <div style={{ position: 'relative' }}>
-                    <motion.div
-                      animate={{ color: email ? '#0088ff' : '#71717a' }}
-                      style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: '14px', zIndex: 1 }}
-                    >
-                      <Mail size={18} />
-                    </motion.div>
-                    <input
-                      type="email"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="operator@legit.gg"
-                      className="form-input"
-                      style={{
-                        paddingLeft: '2.75rem',
-                        background: 'rgba(6, 8, 12, 0.7)',
-                        borderColor: 'rgba(255, 255, 255, 0.08)',
-                        borderRadius: '12px',
-                        fontSize: '0.92rem',
-                        height: '46px'
-                      }}
-                    />
-                  </div>
+                  <Mail size={18} />
                 </motion.div>
+                <input
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="operator@legitcheats.live"
+                  className="form-input"
+                  style={{
+                    paddingLeft: '2.75rem',
+                    background: 'rgba(6, 8, 12, 0.7)',
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    fontSize: '0.92rem',
+                    height: '46px',
+                    width: '100%'
+                  }}
+                />
+              </div>
+            </motion.div>
+          )}
 
+          {/* Password fields for signin and signup */}
+          {(mode === 'signin' || mode === 'signup') && (
+            <motion.div
+              variants={itemVariants}
+              className="form-group"
+              style={{ marginBottom: mode === 'signup' ? '1.2rem' : '1.5rem' }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                <label className="form-label" style={{ fontSize: '0.85rem', color: '#c4c4cc', margin: 0 }}>
+                  Password
+                </label>
+                {mode === 'signin' && (
+                  <motion.button
+                    type="button"
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      fontSize: '0.8rem',
+                      color: '#00f0ff',
+                      cursor: 'pointer',
+                      fontWeight: 500,
+                      padding: 0
+                    }}
+                    onClick={() => {
+                      setMode('forgot');
+                      setError('');
+                      setSuccessMsg('');
+                    }}
+                  >
+                    Forgot password?
+                  </motion.button>
+                )}
+              </div>
+              <div style={{ position: 'relative' }}>
                 <motion.div
-                  variants={itemVariants}
-                  className="form-group"
-                  style={{ marginBottom: mode === 'signup' ? '1.2rem' : '1.5rem' }}
+                  animate={{ color: password ? '#0088ff' : '#71717a' }}
+                  style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: '14px', zIndex: 1 }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                    <label className="form-label" style={{ fontSize: '0.85rem', color: '#c4c4cc', margin: 0 }}>
-                      Password
-                    </label>
-                    {mode === 'signin' && (
-                      <motion.span
-                        whileHover={{ scale: 1.05 }}
-                        style={{ fontSize: '0.8rem', color: '#0088ff', cursor: 'pointer' }}
-                        onClick={() => alert('Password reset link sent to your registered email.')}
-                      >
-                        Forgot?
-                      </motion.span>
-                    )}
-                  </div>
-                  <div style={{ position: 'relative' }}>
-                    <motion.div
-                      animate={{ color: password ? '#0088ff' : '#71717a' }}
-                      style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: '14px', zIndex: 1 }}
-                    >
-                      <Lock size={18} />
-                    </motion.div>
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      className="form-input"
-                      style={{
-                        paddingLeft: '2.75rem',
-                        paddingRight: '2.75rem',
-                        background: 'rgba(6, 8, 12, 0.7)',
-                        borderColor: 'rgba(255, 255, 255, 0.08)',
-                        borderRadius: '12px',
-                        fontSize: '0.92rem',
-                        height: '46px'
-                      }}
-                    />
-                    <motion.button
-                      type="button"
-                      whileHover={{ scale: 1.1 }}
-                      whileTap={{ scale: 0.9 }}
-                      onClick={() => setShowPassword(!showPassword)}
-                      style={{
-                        position: 'absolute',
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        right: '12px',
-                        background: 'transparent',
-                        border: 'none',
-                        color: '#71717a',
-                        cursor: 'pointer',
-                        padding: '2px',
-                        display: 'flex'
-                      }}
-                    >
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </motion.button>
-                  </div>
+                  <Lock size={18} />
                 </motion.div>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••••••"
+                  className="form-input"
+                  style={{
+                    paddingLeft: '2.75rem',
+                    paddingRight: '2.75rem',
+                    background: 'rgba(6, 8, 12, 0.7)',
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    fontSize: '0.92rem',
+                    height: '46px',
+                    width: '100%'
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{
+                    position: 'absolute',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    right: '12px',
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#71717a',
+                    cursor: 'pointer',
+                    padding: '4px',
+                    display: 'flex'
+                  }}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </motion.div>
+          )}
 
-                <AnimatePresence>
-                  {mode === 'signup' && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                      style={{ overflow: 'hidden' }}
-                    >
-                      <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-                        <label className="form-label" style={{ fontSize: '0.85rem', color: '#c4c4cc', marginBottom: '0.4rem' }}>
-                          Confirm Password
-                        </label>
-                        <div style={{ position: 'relative' }}>
-                          <motion.div
-                            animate={{ color: confirmPassword ? '#0088ff' : '#71717a' }}
-                            style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: '14px', zIndex: 1 }}
-                          >
-                            <ShieldCheck size={18} />
-                          </motion.div>
-                          <input
-                            type="password"
-                            required
-                            value={confirmPassword}
-                            onChange={(e) => setConfirmPassword(e.target.value)}
-                            placeholder="••••••••••••"
-                            className="form-input"
-                            style={{
-                              paddingLeft: '2.75rem',
-                              background: 'rgba(6, 8, 12, 0.7)',
-                              borderColor: 'rgba(255, 255, 255, 0.08)',
-                              borderRadius: '12px',
-                              fontSize: '0.92rem',
-                              height: '46px'
-                            }}
-                          />
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="service-key-form"
-                initial={{ opacity: 0, x: 15 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -15 }}
-                transition={{ duration: 0.3 }}
-              >
-                <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-                  <label className="form-label" style={{ fontSize: '0.85rem', color: '#c4c4cc', marginBottom: '0.4rem' }}>
-                    Cryptographic Service Role Key (Administrator Authentication)
-                  </label>
-                  <div style={{ position: 'relative' }}>
-                    <motion.div
-                      animate={{ color: serviceKey ? '#f59e0b' : '#71717a' }}
-                      style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: '14px', zIndex: 1 }}
-                    >
-                      <Key size={18} />
-                    </motion.div>
-                    <input
-                      type="password"
-                      required
-                      value={serviceKey}
-                      onChange={(e) => setServiceKey(e.target.value)}
-                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6..."
-                      className="form-input"
-                      style={{
-                        paddingLeft: '2.75rem',
-                        background: 'rgba(6, 8, 12, 0.7)',
-                        borderColor: 'rgba(255, 255, 255, 0.08)',
-                        borderRadius: '12px',
-                        fontSize: '0.85rem',
-                        height: '46px',
-                        fontFamily: 'monospace'
-                      }}
-                    />
-                  </div>
-                  <p style={{ fontSize: '0.78rem', color: '#71717a', marginTop: '0.5rem' }}>
-                    Used for instant administrator dashboard access without email sign-in.
-                  </p>
+          {/* Confirm Password for signup */}
+          {mode === 'signup' && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+              style={{ overflow: 'hidden' }}
+            >
+              <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                <label className="form-label" style={{ fontSize: '0.85rem', color: '#c4c4cc', marginBottom: '0.4rem', display: 'block' }}>
+                  Confirm Password
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <motion.div
+                    animate={{ color: confirmPassword ? '#0088ff' : '#71717a' }}
+                    style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: '14px', zIndex: 1 }}
+                  >
+                    <ShieldCheck size={18} />
+                  </motion.div>
+                  <input
+                    type="password"
+                    required
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="form-input"
+                    style={{
+                      paddingLeft: '2.75rem',
+                      background: 'rgba(6, 8, 12, 0.7)',
+                      borderColor: 'rgba(255, 255, 255, 0.08)',
+                      borderRadius: '12px',
+                      fontSize: '0.92rem',
+                      height: '46px',
+                      width: '100%'
+                    }}
+                  />
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              </div>
+            </motion.div>
+          )}
 
+          {/* New password fields for reset-password mode */}
+          {mode === 'reset-password' && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              <div className="form-group" style={{ marginBottom: '1.2rem' }}>
+                <label className="form-label" style={{ fontSize: '0.85rem', color: '#c4c4cc', marginBottom: '0.4rem', display: 'block' }}>
+                  New Password
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <motion.div
+                    animate={{ color: newPassword ? '#0088ff' : '#71717a' }}
+                    style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: '14px', zIndex: 1 }}
+                  >
+                    <Lock size={18} />
+                  </motion.div>
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    required
+                    autoComplete="new-password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="At least 6 characters"
+                    className="form-input"
+                    style={{
+                      paddingLeft: '2.75rem',
+                      paddingRight: '2.75rem',
+                      background: 'rgba(6, 8, 12, 0.7)',
+                      borderColor: 'rgba(255, 255, 255, 0.08)',
+                      borderRadius: '12px',
+                      fontSize: '0.92rem',
+                      height: '46px',
+                      width: '100%'
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    style={{
+                      position: 'absolute',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      right: '12px',
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#71717a',
+                      cursor: 'pointer',
+                      padding: '4px',
+                      display: 'flex'
+                    }}
+                    aria-label={showNewPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                <label className="form-label" style={{ fontSize: '0.85rem', color: '#c4c4cc', marginBottom: '0.4rem', display: 'block' }}>
+                  Confirm New Password
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <motion.div
+                    animate={{ color: confirmNewPassword ? '#0088ff' : '#71717a' }}
+                    style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: '14px', zIndex: 1 }}
+                  >
+                    <ShieldCheck size={18} />
+                  </motion.div>
+                  <input
+                    type={showConfirmNewPassword ? 'text' : 'password'}
+                    required
+                    autoComplete="new-password"
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    placeholder="Re-enter new password"
+                    className="form-input"
+                    style={{
+                      paddingLeft: '2.75rem',
+                      paddingRight: '2.75rem',
+                      background: 'rgba(6, 8, 12, 0.7)',
+                      borderColor: 'rgba(255, 255, 255, 0.08)',
+                      borderRadius: '12px',
+                      fontSize: '0.92rem',
+                      height: '46px',
+                      width: '100%'
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmNewPassword(!showConfirmNewPassword)}
+                    style={{
+                      position: 'absolute',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      right: '12px',
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#71717a',
+                      cursor: 'pointer',
+                      padding: '4px',
+                      display: 'flex'
+                    }}
+                    aria-label={showConfirmNewPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showConfirmNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Submit Action Button */}
           <motion.button
             whileHover={{ scale: 1.02, boxShadow: '0 8px 30px rgba(0, 136, 255, 0.5)' }}
             whileTap={{ scale: 0.98 }}
             type="submit"
-            disabled={submitting}
+            disabled={submitting || (mode === 'forgot' && resetCooldown > 0)}
             className="btn btn-primary"
             style={{
               width: '100%',
@@ -598,7 +845,9 @@ export default function Login() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '0.5rem'
+              gap: '0.5rem',
+              opacity: (mode === 'forgot' && resetCooldown > 0) ? 0.7 : 1,
+              cursor: (mode === 'forgot' && resetCooldown > 0) ? 'not-allowed' : 'pointer'
             }}
           >
             {submitting ? (
@@ -606,18 +855,67 @@ export default function Login() {
                 animate={{ opacity: [1, 0.5, 1] }}
                 transition={{ duration: 1, repeat: Infinity }}
               >
-                Authenticating...
+                Processing...
               </motion.span>
             ) : mode === 'signin' ? (
-              <><span>Sign In</span> <motion.div animate={{ x: [0, 4, 0] }} transition={{ duration: 1, repeat: Infinity }}><ArrowRight size={18} /></motion.div></>
+              <>
+                <span>Sign In</span>
+                <motion.div animate={{ x: [0, 4, 0] }} transition={{ duration: 1.2, repeat: Infinity }}>
+                  <ArrowRight size={18} />
+                </motion.div>
+              </>
             ) : mode === 'signup' ? (
-              <><span>Register Account</span> <motion.div animate={{ x: [0, 4, 0] }} transition={{ duration: 1, repeat: Infinity }}><ArrowRight size={18} /></motion.div></>
+              <>
+                <span>Register Account</span>
+                <motion.div animate={{ x: [0, 4, 0] }} transition={{ duration: 1.2, repeat: Infinity }}>
+                  <ArrowRight size={18} />
+                </motion.div>
+              </>
+            ) : mode === 'forgot' ? (
+              <>
+                <span>{resetCooldown > 0 ? `Resend Available in ${resetCooldown}s` : 'Send Recovery Link'}</span>
+                <motion.div animate={{ x: [0, 4, 0] }} transition={{ duration: 1.2, repeat: Infinity }}>
+                  <ArrowRight size={18} />
+                </motion.div>
+              </>
             ) : (
-              <><span>Unlock Command Center</span> <motion.div animate={{ x: [0, 4, 0] }} transition={{ duration: 1, repeat: Infinity }}><ArrowRight size={18} /></motion.div></>
+              <>
+                <span>Update Password</span>
+                <motion.div animate={{ x: [0, 4, 0] }} transition={{ duration: 1.2, repeat: Infinity }}>
+                  <ArrowRight size={18} />
+                </motion.div>
+              </>
             )}
           </motion.button>
         </form>
 
+        {/* Bottom context links */}
+        {mode === 'forgot' && (
+          <motion.div
+            variants={itemVariants}
+            style={{ textAlign: 'center', marginTop: '1.25rem', fontSize: '0.85rem' }}
+          >
+            <span className="text-muted">Remembered your password? </span>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('signin');
+                setError('');
+                setSuccessMsg('');
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#00f0ff',
+                fontWeight: 600,
+                cursor: 'pointer',
+                padding: 0
+              }}
+            >
+              Sign In
+            </button>
+          </motion.div>
+        )}
       </motion.div>
     </div>
   );
