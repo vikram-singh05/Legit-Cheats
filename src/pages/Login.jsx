@@ -137,10 +137,8 @@ export default function Login() {
           console.warn('Password recovery request status:', err?.message || err);
         }
 
-        // Anti-enumeration: neutral response regardless of whether email exists
-        setSuccessMsg(
-          'If an account exists with this email, a secure password recovery link has been dispatched via legitcheats.live.'
-        );
+        // Minimal and clean confirmation message
+        setSuccessMsg('Reset link sent! Check your inbox.');
         setResetCooldown(60); // 60s cooldown
         return;
       }
@@ -157,7 +155,7 @@ export default function Login() {
         }
 
         await updatePassword(newPassword);
-        setSuccessMsg('Your password has been successfully updated! Redirecting...');
+        setSuccessMsg('Password updated! Redirecting...');
         setNewPassword('');
         setConfirmNewPassword('');
         setTimeout(() => {
@@ -373,7 +371,7 @@ export default function Login() {
             >
               {mode === 'signin' && 'Sign in to access your dashboard and active licenses'}
               {mode === 'signup' && 'Join LEGIT and unleash hyper-tuned performance'}
-              {mode === 'forgot' && 'Enter your registered email to receive a secure recovery link'}
+              {mode === 'forgot' && 'Enter your email to receive a password reset link'}
               {mode === 'reset-password' && 'Choose a strong, secure new password for your account'}
             </motion.p>
           </AnimatePresence>
