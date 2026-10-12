@@ -1,3 +1,37 @@
+const rateLimitMap = new Map();
+
+function getTrustedClientIp(req) {
+  return (
+    req.headers['x-real-ip'] ||
+    req.headers['x-vercel-forwarded-for']?.split(',')[0]?.trim() ||
+    req.socket?.remoteAddress ||
+    '0.0.0.0'
+  );
+}
+
+function checkRateLimit(clientIp) {
+  const now = Date.now();
+  const windowMs = 60 * 1000; // 1 minute
+  const maxRequests = 10; // Max 10 attempts per minute per IP
+
+  const record = rateLimitMap.get(clientIp) || { count: 0, resetTime: now + windowMs };
+  if (now > record.resetTime) {
+    record.count = 1;
+    record.resetTime = now + windowMs;
+  } else {
+    record.count++;
+  }
+  rateLimitMap.set(clientIp, record);
+
+  if (rateLimitMap.size > 1000) {
+    for (const [key, val] of rateLimitMap.entries()) {
+      if (now > val.resetTime) rateLimitMap.delete(key);
+    }
+  }
+
+  return record.count <= maxRequests;
+}
+
 export default async function handler(req, res) {
   // Defense-in-depth HTTP Security Headers
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -10,8 +44,6 @@ export default async function handler(req, res) {
   const ALLOWED_ORIGINS = [
     'https://legitcheats.live',
     'https://www.legitcheats.live',
-    'https://ligeitcheats.live',
-    'https://www.ligeitcheats.live',
     'http://localhost:5173',
     'http://localhost:3000',
   ];
@@ -31,6 +63,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
+  // Rate Limiting Guard against brute-force key guessing (HIGH-02)
+  const clientIp = getTrustedClientIp(req);
+  if (!checkRateLimit(clientIp)) {
+    return res.status(429).json({ error: 'Security Alert: Rate limit exceeded. Please wait 60 seconds.' });
+  }
+
   try {
     const supabaseUrl = process.env.VITE_SUPABASE_URL;
     const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
@@ -47,7 +85,7 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Authentication Required: You must be signed in to redeem a license.' });
     }
 
-    // Authenticate User
+    // Authenticate User against Supabase Auth
     const authCheckRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
       headers: {
         'apikey': supabaseAnonKey,
@@ -83,8 +121,9 @@ export default async function handler(req, res) {
     });
 
     if (!checkRes.ok) {
-      const errorText = await checkRes.text();
-      return res.status(500).json({ error: `Failed to verify license key with database: ${checkRes.status} ${errorText}` });
+      // SECURITY FIX (MED-03): Log raw error on server; never leak database schema/errors to client
+      console.error('Database license verification error:', await checkRes.text());
+      return res.status(500).json({ error: 'Database verification service temporarily unavailable.' });
     }
 
     const existingLicenses = await checkRes.json();
