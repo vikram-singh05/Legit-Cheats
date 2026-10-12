@@ -156,22 +156,28 @@ export function PurchaseProvider({ children }) {
    * Verify a purchase:
    * 1. Requires valid user session
    * 2. Calls server-side /api/verify-payment with user's JWT access token
-   * 3. Prevents client-side arbitrary string minting
+   * 3. Prevents client-side arbitrary string minting or direct DB scraping (CRIT-02)
    */
   const verifyPurchase = async (orderIdOrRef, customPlan = null) => {
     if (!user) {
       throw new Error('Authentication Required: Please sign in to verify payments.');
     }
 
-    const trimmedInput = (orderIdOrRef || '').trim();
-    if (!trimmedInput || trimmedInput.length < 4) {
+    const isObj = typeof orderIdOrRef === 'object' && orderIdOrRef !== null;
+    const paymentId = isObj
+      ? (orderIdOrRef.razorpay_payment_id || orderIdOrRef.payment_id || '')
+      : (typeof orderIdOrRef === 'string' ? orderIdOrRef.trim() : '');
+    const orderId = isObj ? (orderIdOrRef.razorpay_order_id || '') : '';
+    const signature = isObj ? (orderIdOrRef.razorpay_signature || '') : '';
+
+    if (!paymentId && !orderId) {
       throw new Error('Please enter a valid Transaction Reference, Razorpay Payment ID, or Order ID.');
     }
 
     const targetPlan = customPlan || selectedPlan;
 
     // A. Check if this is a real Razorpay payment ID (e.g. pay_XXXX)
-    if (trimmedInput.startsWith('pay_')) {
+    if (paymentId.startsWith('pay_')) {
       const headers = {
         'Content-Type': 'application/json'
       };
@@ -183,7 +189,9 @@ export function PurchaseProvider({ children }) {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          payment_id: trimmedInput,
+          razorpay_payment_id: paymentId,
+          razorpay_order_id: orderId,
+          razorpay_signature: signature,
           plan_id: targetPlan.id
         })
       });
@@ -201,7 +209,7 @@ export function PurchaseProvider({ children }) {
       };
 
       const existingIdx = purchases.findIndex(
-        p => p.transactionRef === trimmedInput || p.orderId === verifiedOrder.orderId
+        p => p.transactionRef === paymentId || p.orderId === verifiedOrder.orderId
       );
 
       let updatedList;
@@ -216,63 +224,22 @@ export function PurchaseProvider({ children }) {
     }
 
     // B. Check if this is an already verified order in user's state
+    const cleanRef = paymentId.toLowerCase();
     const existingOrder = purchases.find(
-      p => (p.orderId && p.orderId.toLowerCase() === trimmedInput.toLowerCase()) ||
-           (p.transactionRef && p.transactionRef.toLowerCase() === trimmedInput.toLowerCase())
+      p => (p.orderId && p.orderId.toLowerCase() === cleanRef) ||
+           (p.transactionRef && p.transactionRef.toLowerCase() === cleanRef)
     );
 
     if (existingOrder && existingOrder.status === 'verified' && isValidLicenseKey(existingOrder.key)) {
       return existingOrder;
     }
 
-    // C. Check against remote Supabase licenses table bound to this user
-    // --- SECURITY FIX (HIGH-02): Strict input sanitization before .or() query ---
-    const safeInput = trimmedInput.replace(/[^a-zA-Z0-9_\-]/g, '');
-    if (safeInput.length < 4) {
-      throw new Error('Invalid reference format.');
-    }
-    try {
-      const { data: dbLicense, error: dbErr } = await supabase
-        .from('licenses')
-        .select('*')
-        .or(`note.ilike.%${safeInput}%,license_key.eq.${safeInput}`)
-        .eq('status', 'active')
-        .maybeSingle();
-
-      if (!dbErr && dbLicense && isValidLicenseKey(dbLicense.license_key)) {
-        const verifiedOrder = {
-          orderId: existingOrder ? existingOrder.orderId : 'ORD-' + Math.floor(100000 + Math.random() * 900000),
-          planId: targetPlan.id,
-          planName: targetPlan.name,
-          price: targetPlan.price,
-          amount: targetPlan.amount,
-          durationDays: dbLicense.duration_days,
-          isLifetime: dbLicense.is_lifetime,
-          paymentMethod: existingOrder ? existingOrder.paymentMethod : 'verified_remote',
-          transactionRef: trimmedInput,
-          status: 'verified',
-          verifiedAt: new Date().toISOString(),
-          userEmail: user.email,
-          userId: user.id,
-          key: dbLicense.license_key,
-          hwid: dbLicense.hwid || null
-        };
-
-        const updatedList = [
-          verifiedOrder,
-          ...purchases.filter(p => p.orderId !== verifiedOrder.orderId && p.transactionRef !== trimmedInput)
-        ];
-        await savePurchases(updatedList);
-        return verifiedOrder;
-      }
-    } catch (checkErr) {
-      console.warn('Database remote check notice:', checkErr);
+    // C. Check if this is an external license key to redeem
+    if (isValidLicenseKey(paymentId)) {
+      return await redeemExternalKey(paymentId);
     }
 
-    // D. If unverified manual reference, record as pending and reject instant key grant
-    throw new Error(
-      'Payment reference could not be verified automatically. For instant automated delivery, complete checkout with Razorpay. If you paid via UPI/manual transfer, your order is queued for administrator review.'
-    );
+    throw new Error('Transaction could not be verified automatically. If you paid via UPI manual transfer, please allow admin review or contact support.');
   };
 
   const redeemExternalKey = async (licenseKey) => {
