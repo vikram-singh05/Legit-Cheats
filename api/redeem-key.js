@@ -8,6 +8,8 @@ export default async function handler(req, res) {
 
   const origin = req.headers['origin'] || '';
   const ALLOWED_ORIGINS = [
+    'https://legitcheats.live',
+    'https://www.legitcheats.live',
     'https://ligeitcheats.live',
     'https://www.ligeitcheats.live',
     'http://localhost:5173',
@@ -94,27 +96,37 @@ export default async function handler(req, res) {
     const licenseData = existingLicenses[0];
     
     // Bind the key to the user if not already bound
-    if (licenseData.note && licenseData.note.includes('Claimed by')) {
-      if (!licenseData.note.includes(`Claimed by ${authUser.id}`)) {
-         return res.status(403).json({ error: 'License key has already been claimed by another account.' });
+    const userIdentifier = authUser.email ? authUser.email : authUser.id;
+    const isAlreadyClaimed = licenseData.note && licenseData.note.includes('Claimed by');
+
+    if (isAlreadyClaimed) {
+      const isClaimedByCurrentUser =
+        licenseData.note.includes(`Claimed by ${authUser.id}`) ||
+        (authUser.email && licenseData.note.includes(`Claimed by ${authUser.email}`));
+      if (!isClaimedByCurrentUser) {
+        return res.status(403).json({ error: 'License key has already been claimed by another account.' });
       }
     } else if (supabaseServiceKey) {
-       // Bind it to the user so no one else can claim it
-       const updateRes = await fetch(`${supabaseUrl}/rest/v1/licenses?license_key=eq.${encodeURIComponent(cleanKey)}`, {
-         method: 'PATCH',
-         headers: {
-           'apikey': supabaseAnonKey,
-           'Authorization': `Bearer ${supabaseServiceKey}`,
-           'Content-Type': 'application/json',
-           'Prefer': 'return=minimal'
-         },
-         body: JSON.stringify({
-           note: licenseData.note ? `${licenseData.note} | Claimed by ${authUser.id}` : `Claimed by ${authUser.id}`
-         })
-       });
-       if (!updateRes.ok) {
-         console.warn('Failed to update license note during claiming:', await updateRes.text());
-       }
+      // Bind it to the user with their email address so admin sees their Gmail
+      const updatedNote = licenseData.note
+        ? `${licenseData.note} | Claimed by ${userIdentifier}`
+        : `Claimed by ${userIdentifier}`;
+
+      const updateRes = await fetch(`${supabaseUrl}/rest/v1/licenses?license_key=eq.${encodeURIComponent(cleanKey)}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': supabaseAnonKey,
+          'Authorization': `Bearer ${supabaseServiceKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({
+          note: updatedNote
+        })
+      });
+      if (!updateRes.ok) {
+        console.warn('Failed to update license note during claiming:', await updateRes.text());
+      }
     }
 
     return res.status(200).json({

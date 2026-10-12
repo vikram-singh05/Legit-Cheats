@@ -3,20 +3,21 @@ import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Key, Users, Activity, Trash2, Plus, LogOut, RefreshCw, Copy, Check,
-  Search, Shield, AlertTriangle, ExternalLink, Sparkles, Ban,
-  Unlock, CheckCircle2, ChevronRight, X
+  Search, AlertTriangle, ExternalLink, Sparkles, Ban,
+  Unlock, CheckCircle2, Mail, Clock
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { user, profile, isAdmin, signOut } = useAuth();
+  const { user, signOut } = useAuth();
 
   const [licenses, setLicenses] = useState([]);
+  const [userMap, setUserMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'active' | 'bound' | 'unbound' | 'banned'
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'active' | 'expired' | 'bound' | 'unbound' | 'banned'
   
   // Key Generation State
   const [newKeyDuration, setNewKeyDuration] = useState(30);
@@ -49,6 +50,25 @@ export default function Dashboard() {
         showToast('Error querying licenses: ' + error.message);
       } else {
         setLicenses(data || []);
+      }
+
+      // Fetch user directory to resolve UUIDs to user Gmails
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (token) {
+          const userRes = await fetch('/api/admin-users', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (userRes.ok) {
+            const userData = await userRes.json();
+            if (userData.users) {
+              setUserMap(userData.users);
+            }
+          }
+        }
+      } catch (userDirErr) {
+        console.warn('User directory mapping unavailable:', userDirErr);
       }
     } catch (err) {
       console.error(err);
@@ -196,27 +216,164 @@ export default function Dashboard() {
     }
   };
 
+  // Helper to extract Claimed Email and Clean Note
+  const parseLicenseClaimInfo = (lic) => {
+    const note = lic.note || '';
+    let claimedEmail = null;
+    let cleanNote = note;
+
+    // Format A: "Verified Razorpay: pay_... | email@domain.com (uuid)"
+    const razorMatch = note.match(/\|\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    if (razorMatch) {
+      claimedEmail = razorMatch[1];
+      cleanNote = note.split('|')[0]?.trim() || note;
+    }
+
+    // Format B: "Claimed by user@domain.com" or "Claimed by <uuid>"
+    const claimMatch = note.match(/Claimed by\s+([^|\s]+)/i);
+    if (claimMatch) {
+      const claimant = claimMatch[1].trim();
+      if (claimant.includes('@')) {
+        claimedEmail = claimant;
+      } else if (userMap[claimant]) {
+        claimedEmail = userMap[claimant];
+      } else {
+        claimedEmail = claimant;
+      }
+      cleanNote = note.replace(/\|\s*Claimed by.*$/i, '').replace(/Claimed by.*$/i, '').trim();
+    }
+
+    // Format C: Direct email anywhere in note if not matched
+    if (!claimedEmail) {
+      const emailMatch = note.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+      if (emailMatch) {
+        claimedEmail = emailMatch[1];
+      }
+    }
+
+    return {
+      claimedEmail,
+      displayNote: cleanNote || '—'
+    };
+  };
+
+  // Helper to determine license expiration and relative time
+  const getLicenseExpiryInfo = (lic) => {
+    if (lic.is_lifetime) {
+      return {
+        isExpired: false,
+        badgeText: 'LIFETIME',
+        badgeColor: '#c084fc',
+        badgeBg: 'rgba(168, 85, 247, 0.15)',
+        remainingText: 'Permanent'
+      };
+    }
+
+    if (lic.status === 'banned') {
+      return {
+        isExpired: false,
+        badgeText: 'BANNED',
+        badgeColor: '#f87171',
+        badgeBg: 'rgba(239, 68, 68, 0.15)',
+        remainingText: 'Revoked'
+      };
+    }
+
+    const durationDays = Number(lic.duration_days) || 0;
+    if (durationDays <= 0) {
+      return {
+        isExpired: false,
+        badgeText: 'ACTIVE',
+        badgeColor: '#34d399',
+        badgeBg: 'rgba(16, 185, 129, 0.15)',
+        remainingText: 'Active'
+      };
+    }
+
+    // Reference date: activated_at if bound, or created_at
+    const baseDateStr = lic.activated_at || lic.created_at;
+    if (!baseDateStr) {
+      return {
+        isExpired: false,
+        badgeText: 'ACTIVE',
+        badgeColor: '#34d399',
+        badgeBg: 'rgba(16, 185, 129, 0.15)',
+        remainingText: `${durationDays} Days`
+      };
+    }
+
+    const baseTime = new Date(baseDateStr).getTime();
+    if (isNaN(baseTime)) {
+      return {
+        isExpired: false,
+        badgeText: 'ACTIVE',
+        badgeColor: '#34d399',
+        badgeBg: 'rgba(16, 185, 129, 0.15)',
+        remainingText: `${durationDays} Days`
+      };
+    }
+
+    const expiresTime = baseTime + durationDays * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const isExpired = now > expiresTime;
+
+    if (isExpired) {
+      const daysAgo = Math.floor((now - expiresTime) / (24 * 60 * 60 * 1000));
+      const hoursAgo = Math.floor((now - expiresTime) / (60 * 60 * 1000));
+      const expiredAgoText = daysAgo > 0 ? `${daysAgo}d ago` : `${hoursAgo}h ago`;
+
+      return {
+        isExpired: true,
+        badgeText: 'EXPIRED',
+        badgeColor: '#fb7185',
+        badgeBg: 'rgba(244, 63, 94, 0.15)',
+        badgeBorder: 'rgba(244, 63, 94, 0.3)',
+        remainingText: `Expired ${expiredAgoText}`
+      };
+    }
+
+    const remainingMs = expiresTime - now;
+    const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
+    const remainingDays = Math.floor(remainingHours / 24);
+    const remainingText = remainingDays > 0 ? `${remainingDays}d ${remainingHours % 24}h left` : `${remainingHours}h left`;
+
+    return {
+      isExpired: false,
+      badgeText: 'ACTIVE',
+      badgeColor: '#34d399',
+      badgeBg: 'rgba(16, 185, 129, 0.15)',
+      remainingText
+    };
+  };
+
   // Filtered Licenses
   const filteredLicenses = useMemo(() => {
     return licenses.filter(lic => {
+      const expiryInfo = getLicenseExpiryInfo(lic);
+      const claimInfo = parseLicenseClaimInfo(lic);
+
       const matchesQuery =
         lic.license_key.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (lic.note && lic.note.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (lic.hwid && lic.hwid.toLowerCase().includes(searchQuery.toLowerCase()));
+        (claimInfo.claimedEmail && claimInfo.claimedEmail.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (claimInfo.displayNote && claimInfo.displayNote.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (lic.hwid && lic.hwid.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (searchQuery.toLowerCase() === 'expired' && expiryInfo.isExpired);
 
       if (!matchesQuery) return false;
 
       if (statusFilter === 'all') return true;
-      if (statusFilter === 'active') return lic.status === 'active';
+      if (statusFilter === 'active') return !expiryInfo.isExpired && lic.status !== 'banned';
+      if (statusFilter === 'expired') return expiryInfo.isExpired;
       if (statusFilter === 'bound') return !!lic.hwid;
       if (statusFilter === 'unbound') return !lic.hwid;
       if (statusFilter === 'banned') return lic.status === 'banned';
       return true;
     });
-  }, [licenses, searchQuery, statusFilter]);
+  }, [licenses, searchQuery, statusFilter, userMap]);
 
   const activeBoundCount = licenses.filter(l => l.hwid).length;
   const lifetimeCount = licenses.filter(l => l.is_lifetime).length;
+  const expiredCount = licenses.filter(l => getLicenseExpiryInfo(l).isExpired).length;
 
   /* ─── Animation Variants ─── */
   const containerVariants = {
@@ -400,86 +557,133 @@ export default function Dashboard() {
         </motion.header>
 
         {/* =========================================================================
-            TOP STATS & METRICS (4 CARDS)
+            TOP STATS & METRICS (5 CARDS)
            ========================================================================= */}
-        <motion.div variants={itemVariants} className="grid grid-cols-2 lg:grid-cols-4 gap-4" style={{ marginBottom: '1.5rem' }}>
-          <motion.div whileHover={{ y: -5 }} className="card" style={{ padding: '1.25rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <motion.div variants={itemVariants} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5" style={{ marginBottom: '1.5rem' }}>
+          <motion.div whileHover={{ y: -5 }} className="card" style={{ padding: '1.15rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
             <motion.div
               animate={{ rotate: [0, 10, -10, 0] }}
               transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
-              style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(0, 136, 255, 0.15)', border: '1px solid rgba(0, 136, 255, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(0, 136, 255, 0.15)', border: '1px solid rgba(0, 136, 255, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
             >
-              <Key size={20} color="#0088ff" />
+              <Key size={19} color="#0088ff" />
             </motion.div>
             <div>
-              <p className="text-muted" style={{ fontSize: '0.76rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', margin: 0 }}>Total Issued Keys</p>
+              <p className="text-muted" style={{ fontSize: '0.74rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', margin: 0 }}>Total Keys</p>
               <motion.h2
                 key={licenses.length}
                 initial={{ scale: 1.2, color: '#0088ff' }}
                 animate={{ scale: 1, color: '#fff' }}
-                style={{ fontSize: '1.75rem', fontWeight: 800, margin: 0, lineHeight: 1.2 }}
+                style={{ fontSize: '1.65rem', fontWeight: 800, margin: 0, lineHeight: 1.2 }}
               >
                 {licenses.length}
               </motion.h2>
             </div>
           </motion.div>
 
-          <motion.div whileHover={{ y: -5 }} className="card" style={{ padding: '1.25rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <motion.div whileHover={{ y: -5 }} className="card" style={{ padding: '1.15rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
             <motion.div
               animate={{ rotate: [0, 10, -10, 0] }}
-              transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut', delay: 0.5 }}
-              style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(0, 240, 255, 0.15)', border: '1px solid rgba(0, 240, 255, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut', delay: 0.4 }}
+              style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(0, 240, 255, 0.15)', border: '1px solid rgba(0, 240, 255, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
             >
-              <Users size={20} color="#00f0ff" />
+              <Users size={19} color="#00f0ff" />
             </motion.div>
             <div>
-              <p className="text-muted" style={{ fontSize: '0.76rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', margin: 0 }}>Active Machines</p>
+              <p className="text-muted" style={{ fontSize: '0.74rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', margin: 0 }}>Active Machines</p>
               <motion.h2
                 key={activeBoundCount}
                 initial={{ scale: 1.2, color: '#ffffff' }}
                 animate={{ scale: 1, color: '#00f0ff' }}
-                style={{ fontSize: '1.75rem', fontWeight: 800, margin: 0, lineHeight: 1.2 }}
+                style={{ fontSize: '1.65rem', fontWeight: 800, margin: 0, lineHeight: 1.2 }}
               >
                 {activeBoundCount}
               </motion.h2>
             </div>
           </motion.div>
 
-          <motion.div whileHover={{ y: -5 }} className="card" style={{ padding: '1.25rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <motion.div
+            whileHover={{ y: -5 }}
+            className="card"
+            style={{
+              padding: '1.15rem 1.25rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.85rem',
+              border: expiredCount > 0 ? '1px solid rgba(244, 63, 94, 0.35)' : '1px solid rgba(255, 255, 255, 0.08)'
+            }}
+          >
             <motion.div
-              animate={{ rotate: [0, 10, -10, 0] }}
-              transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
-              style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(168, 85, 247, 0.15)', border: '1px solid rgba(168, 85, 247, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              animate={{ rotate: [0, 8, -8, 0] }}
+              transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut', delay: 0.8 }}
+              style={{
+                width: '42px',
+                height: '42px',
+                borderRadius: '12px',
+                background: expiredCount > 0 ? 'rgba(244, 63, 94, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                border: expiredCount > 0 ? '1px solid rgba(244, 63, 94, 0.3)' : '1px solid rgba(255, 255, 255, 0.08)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}
             >
-              <Sparkles size={20} color="#c084fc" />
+              <Clock size={19} color={expiredCount > 0 ? '#fb7185' : '#71717a'} />
             </motion.div>
             <div>
-              <p className="text-muted" style={{ fontSize: '0.76rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', margin: 0 }}>Lifetime Passes</p>
+              <p className="text-muted" style={{ fontSize: '0.74rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', margin: 0 }}>Expired Keys</p>
+              <motion.h2
+                key={expiredCount}
+                initial={{ scale: 1.2 }}
+                animate={{ scale: 1 }}
+                style={{
+                  fontSize: '1.65rem',
+                  fontWeight: 800,
+                  margin: 0,
+                  lineHeight: 1.2,
+                  color: expiredCount > 0 ? '#fb7185' : '#a1a1aa'
+                }}
+              >
+                {expiredCount}
+              </motion.h2>
+            </div>
+          </motion.div>
+
+          <motion.div whileHover={{ y: -5 }} className="card" style={{ padding: '1.15rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+            <motion.div
+              animate={{ rotate: [0, 10, -10, 0] }}
+              transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut', delay: 1.2 }}
+              style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(168, 85, 247, 0.15)', border: '1px solid rgba(168, 85, 247, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+            >
+              <Sparkles size={19} color="#c084fc" />
+            </motion.div>
+            <div>
+              <p className="text-muted" style={{ fontSize: '0.74rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', margin: 0 }}>Lifetime Passes</p>
               <motion.h2
                 key={lifetimeCount}
                 initial={{ scale: 1.2, color: '#ffffff' }}
                 animate={{ scale: 1, color: '#c084fc' }}
-                style={{ fontSize: '1.75rem', fontWeight: 800, margin: 0, lineHeight: 1.2 }}
+                style={{ fontSize: '1.65rem', fontWeight: 800, margin: 0, lineHeight: 1.2 }}
               >
                 {lifetimeCount}
               </motion.h2>
             </div>
           </motion.div>
 
-          <motion.div whileHover={{ y: -5 }} className="card" style={{ padding: '1.25rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <motion.div whileHover={{ y: -5 }} className="card" style={{ padding: '1.15rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
             <motion.div
               animate={{ rotate: [0, 10, -10, 0] }}
-              transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut', delay: 1.5 }}
-              style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut', delay: 1.6 }}
+              style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
             >
-              <Activity size={20} color="#10b981" />
+              <Activity size={19} color="#10b981" />
             </motion.div>
             <div>
-              <p className="text-muted" style={{ fontSize: '0.76rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', margin: 0 }}>Driver Service</p>
+              <p className="text-muted" style={{ fontSize: '0.74rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', margin: 0 }}>Driver Service</p>
               <motion.h2
                 animate={{ opacity: [0.7, 1, 0.7] }}
                 transition={{ duration: 2, repeat: Infinity }}
-                style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, lineHeight: 1.2, color: '#10b981' }}
+                style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, lineHeight: 1.2, color: '#10b981' }}
               >
                 OPERATIONAL
               </motion.h2>
@@ -742,7 +946,7 @@ export default function Dashboard() {
                   alignItems: 'center'
                 }}
               >
-                {['all', 'active', 'bound', 'unbound', 'banned'].map((status) => (
+                {['all', 'active', 'expired', 'bound', 'unbound', 'banned'].map((status) => (
                   <motion.button
                     key={status}
                     whileHover={{ scale: 1.05 }}
@@ -753,8 +957,12 @@ export default function Dashboard() {
                       padding: '6px 14px',
                       borderRadius: '8px',
                       border: 'none',
-                      background: statusFilter === status ? 'rgba(0, 136, 255, 0.25)' : 'transparent',
-                      color: statusFilter === status ? '#fff' : '#8e92a4',
+                      background: statusFilter === status
+                        ? (status === 'expired' ? 'rgba(244, 63, 94, 0.25)' : 'rgba(0, 136, 255, 0.25)')
+                        : 'transparent',
+                      color: statusFilter === status
+                        ? (status === 'expired' ? '#fb7185' : '#fff')
+                        : '#8e92a4',
                       fontSize: '0.8rem',
                       fontWeight: 600,
                       cursor: 'pointer',
@@ -800,15 +1008,16 @@ export default function Dashboard() {
                 </motion.div>
               ) : (
                 <div style={{ overflowX: 'auto', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.06)', flex: 1, paddingBottom: '0.5rem' }}>
-                  <table style={{ width: '100%', minWidth: '850px', borderCollapse: 'collapse', textAlign: 'left' }}>
+                  <table style={{ width: '100%', minWidth: '950px', borderCollapse: 'collapse', textAlign: 'left' }}>
                     <thead>
                       <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid rgba(255, 255, 255, 0.07)' }}>
-                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, width: '32%' }}>License Key</th>
-                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, width: '10%' }}>Tier</th>
-                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, width: '10%' }}>Status</th>
-                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, width: '16%' }}>HWID</th>
-                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, width: '17%' }}>Note</th>
-                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, textAlign: 'right', width: '15%' }}>Actions</th>
+                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, width: '25%' }}>License Key</th>
+                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, width: '9%' }}>Tier</th>
+                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, width: '14%' }}>Status</th>
+                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, width: '22%' }}>Claimed User</th>
+                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, width: '12%' }}>HWID</th>
+                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, width: '9%' }}>Note</th>
+                        <th style={{ padding: '0.85rem', color: '#71717a', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 600, textAlign: 'right', width: '9%' }}>Actions</th>
                       </tr>
                     </thead>
                     <motion.tbody
@@ -820,6 +1029,8 @@ export default function Dashboard() {
                         {filteredLicenses.map((lic) => {
                           const isBound = !!lic.hwid;
                           const isBanned = lic.status === 'banned';
+                          const expiryInfo = getLicenseExpiryInfo(lic);
+                          const claimInfo = parseLicenseClaimInfo(lic);
 
                           return (
                             <motion.tr
@@ -829,6 +1040,7 @@ export default function Dashboard() {
                               exit={{ opacity: 0, x: 20, transition: { duration: 0.2 } }}
                               style={{
                                 borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
+                                background: expiryInfo.isExpired ? 'rgba(244, 63, 94, 0.02)' : 'transparent'
                               }}
                             >
                               {/* Key with Copy */}
@@ -858,33 +1070,80 @@ export default function Dashboard() {
                                 )}
                               </td>
 
-                              {/* Status */}
+                              {/* Status with Expiry indicators */}
                               <td style={{ padding: '0.85rem', verticalAlign: 'middle' }}>
-                                <motion.span
-                                  layout
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '0.3rem',
-                                    padding: '3px 9px',
-                                    borderRadius: '6px',
-                                    fontSize: '0.72rem',
-                                    fontWeight: 800,
-                                    background: isBanned
-                                      ? 'rgba(239, 68, 68, 0.15)'
-                                      : lic.status === 'active'
-                                      ? 'rgba(16, 185, 129, 0.15)'
-                                      : 'rgba(255, 255, 255, 0.08)',
-                                    color: isBanned
-                                      ? '#f87171'
-                                      : lic.status === 'active'
-                                      ? '#34d399'
-                                      : '#a1a1aa',
-                                    transition: 'background 0.3s ease, color 0.3s ease'
-                                  }}
-                                >
-                                  {lic.status.toUpperCase()}
-                                </motion.span>
+                                <div>
+                                  <motion.span
+                                    layout
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '0.3rem',
+                                      padding: '3px 8px',
+                                      borderRadius: '6px',
+                                      fontSize: '0.72rem',
+                                      fontWeight: 800,
+                                      background: expiryInfo.badgeBg,
+                                      color: expiryInfo.badgeColor,
+                                      border: expiryInfo.badgeBorder ? `1px solid ${expiryInfo.badgeBorder}` : 'none',
+                                      transition: 'background 0.3s ease, color 0.3s ease'
+                                    }}
+                                  >
+                                    {expiryInfo.isExpired && <Clock size={11} />}
+                                    {expiryInfo.badgeText}
+                                  </motion.span>
+                                  <div style={{ fontSize: '0.71rem', color: expiryInfo.isExpired ? '#fb7185' : '#71717a', marginTop: '3px', fontWeight: 500 }}>
+                                    {expiryInfo.remainingText}
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* Claimed User (Gmail) */}
+                              <td style={{ padding: '0.85rem', verticalAlign: 'middle' }}>
+                                {claimInfo.claimedEmail ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', whiteSpace: 'nowrap' }}>
+                                    <div
+                                      style={{
+                                        width: '22px',
+                                        height: '22px',
+                                        borderRadius: '6px',
+                                        background: 'rgba(0, 136, 255, 0.15)',
+                                        border: '1px solid rgba(0, 240, 255, 0.3)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        flexShrink: 0
+                                      }}
+                                    >
+                                      <Mail size={12} color="#00f0ff" />
+                                    </div>
+                                    <span
+                                      style={{
+                                        color: '#00f0ff',
+                                        fontSize: '0.81rem',
+                                        fontWeight: 600,
+                                        maxWidth: '170px',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap'
+                                      }}
+                                      title={claimInfo.claimedEmail}
+                                    >
+                                      {claimInfo.claimedEmail}
+                                    </span>
+                                    <motion.button
+                                      whileHover={{ scale: 1.15, color: '#fff' }}
+                                      whileTap={{ scale: 0.9 }}
+                                      onClick={() => handleCopyKey(claimInfo.claimedEmail)}
+                                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#71717a', padding: '2px', display: 'flex', alignItems: 'center' }}
+                                      title="Copy Email"
+                                    >
+                                      {copiedKey === claimInfo.claimedEmail ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
+                                    </motion.button>
+                                  </div>
+                                ) : (
+                                  <span style={{ color: '#52525b', fontStyle: 'italic', fontSize: '0.8rem' }}>Unclaimed</span>
+                                )}
                               </td>
 
                               {/* HWID */}
@@ -901,9 +1160,9 @@ export default function Dashboard() {
                                 )}
                               </td>
 
-                              {/* Note */}
-                              <td style={{ padding: '0.85rem', fontSize: '0.84rem', color: '#a1a1aa', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>
-                                {lic.note || '—'}
+                              {/* Clean Note */}
+                              <td style={{ padding: '0.85rem', fontSize: '0.84rem', color: '#a1a1aa', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }} title={claimInfo.displayNote}>
+                                {claimInfo.displayNote}
                               </td>
 
                               {/* Actions */}
