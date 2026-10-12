@@ -147,8 +147,8 @@ export default function Login() {
          MODE: RESET NEW PASSWORD
       ────────────────────────── */
       if (mode === 'reset-password') {
-        if (!newPassword || newPassword.length < 6) {
-          throw new Error('New password must be at least 6 characters long.');
+        if (!newPassword || newPassword.length < 8) {
+          throw new Error('New password must be at least 8 characters long.');
         }
         if (newPassword !== confirmNewPassword) {
           throw new Error('Passwords do not match.');
@@ -171,8 +171,8 @@ export default function Login() {
         if (!cleanEmail || !password) {
           throw new Error('Please fill in both email and password.');
         }
-        if (password.length < 6) {
-          throw new Error('Password must be at least 6 characters long.');
+        if (password.length < 8) {
+          throw new Error('Password must be at least 8 characters long.');
         }
         if (password !== confirmPassword) {
           throw new Error('Passwords do not match.');

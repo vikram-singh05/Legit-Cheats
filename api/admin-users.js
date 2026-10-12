@@ -10,8 +10,6 @@ export default async function handler(req, res) {
   const ALLOWED_ORIGINS = [
     'https://legitcheats.live',
     'https://www.legitcheats.live',
-    'https://ligeitcheats.live',
-    'https://www.ligeitcheats.live',
     'http://localhost:5173',
     'http://localhost:3000',
   ];
@@ -65,8 +63,14 @@ export default async function handler(req, res) {
     }
 
     // 2. Strict Admin Role Verification
-    // Admin check via app_metadata, verified email, or profiles table
-    let isAdmin = authUser.app_metadata?.role === 'admin' || authUser.email === 'jangravikram3105@gmail.com';
+    // Admin check via app_metadata role, configured ADMIN_EMAILS environment variable, or profiles table
+    const configuredAdminEmails = (process.env.ADMIN_EMAILS || 'jangravikram3105@gmail.com')
+      .split(',')
+      .map(e => e.trim().toLowerCase())
+      .filter(Boolean);
+
+    const userEmail = (authUser.email || '').trim().toLowerCase();
+    let isAdmin = authUser.app_metadata?.role === 'admin' || (userEmail && configuredAdminEmails.includes(userEmail));
 
     if (!isAdmin && supabaseServiceKey) {
       const profileRes = await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${authUser.id}&select=role`, {
