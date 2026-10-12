@@ -52,8 +52,8 @@ const PLAN_AMOUNTS = {
 
 // --- SECURITY: Allowed origins for CORS ---
 const ALLOWED_ORIGINS = [
-  'https://ligeitcheats.live',
-  'https://www.ligeitcheats.live',
+  'https://legitcheats.live',
+  'https://www.legitcheats.live',
   'http://localhost:5173',
   'http://localhost:3000',
 ];
@@ -163,19 +163,32 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Security server failed to validate user credentials.' });
     }
 
-    const { razorpay_payment_id, razorpay_order_id, razorpay_signature, plan_id } = req.body || {};
+    const {
+      razorpay_payment_id,
+      payment_id,
+      razorpay_order_id,
+      razorpay_signature,
+      plan_id
+    } = req.body || {};
+
+    const rawPaymentId = razorpay_payment_id || payment_id;
 
     // 4. Strict Whitelist Sanitization of payment_id
-    if (!razorpay_payment_id || typeof razorpay_payment_id !== 'string') {
+    if (!rawPaymentId || typeof rawPaymentId !== 'string') {
       return res.status(400).json({ error: 'Missing payment parameter.' });
     }
     if (!razorpay_order_id || !razorpay_signature) {
       return res.status(400).json({ error: 'Missing Razorpay signature or order ID.' });
     }
 
-    const cleanPaymentId = razorpay_payment_id.trim();
+    const cleanPaymentId = rawPaymentId.trim();
     if (!/^pay_[a-zA-Z0-9]{14,28}$/.test(cleanPaymentId)) {
       return res.status(400).json({ error: 'Invalid Razorpay payment ID format.' });
+    }
+
+    const cleanOrderId = typeof razorpay_order_id === 'string' ? razorpay_order_id.trim() : '';
+    if (!/^order_[a-zA-Z0-9]{14,28}$/.test(cleanOrderId)) {
+      return res.status(400).json({ error: 'Invalid Razorpay order ID format.' });
     }
 
     // 5. Strict Plan Validation
@@ -184,17 +197,70 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid or unrecognized plan_id.' });
     }
 
-    // 6. Anti-Replay: Check memory cache
-    if (redeemedPayments.has(cleanPaymentId)) {
-      return res.status(409).json({ error: 'This payment has already been redeemed for a license key.' });
+    // 6. Cryptographic Server-to-Server HMAC Signature Verification (Timing-Attack Safe)
+    // CRITICAL SECURITY: Verify cryptographic proof before performing ANY database operations.
+    const expectedSignature = crypto.createHmac('sha256', razorpayKeySecret)
+      .update(`${cleanOrderId}|${cleanPaymentId}`)
+      .digest('hex');
+
+    const expectedBuf = Buffer.from(expectedSignature, 'hex');
+    const receivedBuf = Buffer.from(String(razorpay_signature).trim(), 'hex');
+
+    if (expectedBuf.length !== receivedBuf.length || !crypto.timingSafeEqual(expectedBuf, receivedBuf)) {
+      console.error('Signature mismatch detected for payment:', cleanPaymentId);
+      return res.status(400).json({ error: 'Cryptographic signature verification failed. Payment tampered.' });
     }
 
-    // 7. Persistent Anti-Replay: Check Supabase database
-    // --- SECURITY: Use service role key for server-side queries to bypass RLS ---
+    // 7. Server-to-Server Razorpay API Verification
+    const authHeaderEncoded = 'Basic ' + Buffer.from(`${razorpayKeyId}:${razorpayKeySecret}`).toString('base64');
+
+    const razorpayRes = await fetch(`https://api.razorpay.com/v1/payments/${cleanPaymentId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': authHeaderEncoded,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!razorpayRes.ok) {
+      console.error('Razorpay verification error:', await razorpayRes.text());
+      return res.status(400).json({ error: 'Payment verification failed with provider.' });
+    }
+
+    const paymentData = await razorpayRes.json();
+
+    // 7.1 Verify payment belongs to the specified order
+    if (paymentData.order_id && paymentData.order_id !== cleanOrderId) {
+      return res.status(400).json({ error: 'Payment does not correspond to the requested order ID.' });
+    }
+
+    // 7.2 Audit Payment Status
+    if (paymentData.status !== 'captured' && paymentData.status !== 'authorized') {
+      return res.status(400).json({
+        error: 'Payment has not been completed successfully. Please complete the payment first.'
+      });
+    }
+
+    // 7.3 Audit Exact Payment Amount (Anti-tampering against tier spoofing)
+    const expectedAmountPaise = plan.amount * 100;
+    if (paymentData.amount !== expectedAmountPaise) {
+      return res.status(400).json({
+        error: 'Payment amount does not match the selected plan. Please contact support.'
+      });
+    }
+
+    // 7.4 Currency Check
+    if (paymentData.currency !== 'INR') {
+      return res.status(400).json({ error: 'Invalid currency. Must be INR.' });
+    }
+
+    // 8. Persistent Anti-Replay: Check if already redeemed
+    // CRITICAL SECURITY (CRIT-01): Only check existing license AFTER signature and API verification succeed.
+    // Furthermore, strictly verify ownership: verifiedUserId must match the original purchaser.
     const dbAuthToken = supabaseServiceKey || supabaseAnonKey;
     try {
       const checkRes = await fetch(
-        `${supabaseUrl}/rest/v1/licenses?note=like.*${encodeURIComponent(cleanPaymentId)}*&select=license_key,status`, {
+        `${supabaseUrl}/rest/v1/licenses?note=like.*${encodeURIComponent(cleanPaymentId)}*&select=license_key,status,note`, {
         headers: {
           'apikey': supabaseAnonKey,
           'Authorization': `Bearer ${dbAuthToken}`
@@ -203,10 +269,26 @@ export default async function handler(req, res) {
       if (checkRes.ok) {
         const existingLicenses = await checkRes.json();
         if (Array.isArray(existingLicenses) && existingLicenses.length > 0) {
+          const existing = existingLicenses[0];
+          
+          // Strict Ownership Validation
+          const noteStr = existing.note || '';
+          const isOwner =
+            noteStr.includes(verifiedUserId) ||
+            (verifiedUserEmail && noteStr.includes(verifiedUserEmail));
+
+          if (!isOwner) {
+            console.warn(`SECURITY ALERT: Unauthorized key claim attempt for payment ${cleanPaymentId} by user ${verifiedUserId}`);
+            return res.status(403).json({
+              error: 'Access Denied: This transaction is already registered to a different account.'
+            });
+          }
+
+          // Legitimate purchaser retrieving their existing key
           redeemedPayments.add(cleanPaymentId);
           return res.status(200).json({
             success: true,
-            key: existingLicenses[0].license_key,
+            key: existing.license_key,
             order: {
               orderId: 'ORD-' + Math.floor(100000 + Math.random() * 900000),
               planId: plan_id,
@@ -220,6 +302,7 @@ export default async function handler(req, res) {
               status: 'verified',
               verifiedAt: new Date().toISOString(),
               userEmail: verifiedUserEmail,
+              userId: verifiedUserId,
               hwid: null,
               isReclaimed: true
             }
@@ -230,56 +313,7 @@ export default async function handler(req, res) {
       console.warn('Anti-replay database query notice:', checkErr);
     }
 
-    // 8. Server-to-Server Razorpay Signature Verification
-    const expectedSignature = crypto.createHmac('sha256', razorpayKeySecret)
-      .update(`${razorpay_order_id}|${cleanPaymentId}`)
-      .digest('hex');
-
-    if (expectedSignature !== razorpay_signature) {
-      console.error('Signature mismatch', { expectedSignature, received: razorpay_signature });
-      return res.status(400).json({ error: 'Cryptographic signature verification failed. Payment tampered.' });
-    }
-
-    // 8.1 Server-to-Server Razorpay API Verification
-    const authHeaderEncoded = 'Basic ' + Buffer.from(`${razorpayKeyId}:${razorpayKeySecret}`).toString('base64');
-
-    const razorpayRes = await fetch(`https://api.razorpay.com/v1/payments/${cleanPaymentId}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': authHeaderEncoded,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!razorpayRes.ok) {
-      console.error('Razorpay verification error:', await razorpayRes.text());
-      return res.status(400).json({ error: 'Payment verification failed.' });
-    }
-
-    const paymentData = await razorpayRes.json();
-
-    // 9. Audit Payment Status
-    if (paymentData.status !== 'captured' && paymentData.status !== 'authorized') {
-      return res.status(400).json({
-        error: 'Payment has not been completed successfully. Please complete the payment first.'
-      });
-    }
-
-    // 10. Audit Exact Payment Amount (Anti-tampering against tier spoofing)
-    const expectedAmountPaise = plan.amount * 100;
-    if (paymentData.amount !== expectedAmountPaise) {
-      // --- SECURITY: Generic error message, do not leak expected amounts ---
-      return res.status(400).json({
-        error: 'Payment amount does not match the selected plan. Please contact support.'
-      });
-    }
-
-    // 11. Currency Check
-    if (paymentData.currency !== 'INR') {
-      return res.status(400).json({ error: 'Invalid currency. Must be INR.' });
-    }
-
-    // Mark payment ID as redeemed
+    // Mark payment ID as redeemed in memory
     redeemedPayments.add(cleanPaymentId);
 
     // 12. Mint Cryptographic License Key
