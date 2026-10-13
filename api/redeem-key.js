@@ -133,6 +133,16 @@ export default async function handler(req, res) {
     }
 
     const licenseData = existingLicenses[0];
+
+    // Check if the key has expired (only applicable if already activated on a hardware device)
+    if (licenseData.expires_at && new Date(licenseData.expires_at).getTime() < Date.now()) {
+      return res.status(400).json({ error: 'This license key has expired.' });
+    } else if (licenseData.activated_at && licenseData.duration_days && !licenseData.is_lifetime) {
+      const expTime = new Date(licenseData.activated_at).getTime() + Number(licenseData.duration_days) * 24 * 60 * 60 * 1000;
+      if (Date.now() > expTime) {
+        return res.status(400).json({ error: 'This license key has expired.' });
+      }
+    }
     
     // Bind the key to the user if not already bound
     const userIdentifier = authUser.email ? authUser.email : authUser.id;

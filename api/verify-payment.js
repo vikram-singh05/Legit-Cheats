@@ -260,7 +260,7 @@ export default async function handler(req, res) {
     const dbAuthToken = supabaseServiceKey || supabaseAnonKey;
     try {
       const checkRes = await fetch(
-        `${supabaseUrl}/rest/v1/licenses?note=like.*${encodeURIComponent(cleanPaymentId)}*&select=license_key,status,note`, {
+        `${supabaseUrl}/rest/v1/licenses?note=like.*${encodeURIComponent(cleanPaymentId)}*&select=license_key,status,note,hwid,activated_at,expires_at`, {
         headers: {
           'apikey': supabaseAnonKey,
           'Authorization': `Bearer ${dbAuthToken}`
@@ -303,7 +303,9 @@ export default async function handler(req, res) {
               verifiedAt: new Date().toISOString(),
               userEmail: verifiedUserEmail,
               userId: verifiedUserId,
-              hwid: null,
+              hwid: existing.hwid || null,
+              activatedAt: existing.activated_at || null,
+              expiresAt: existing.expires_at || null,
               isReclaimed: true
             }
           });
@@ -368,7 +370,9 @@ export default async function handler(req, res) {
         verifiedAt,
         userEmail: verifiedUserEmail,
         userId: verifiedUserId,
-        hwid: null
+        hwid: null,
+        activatedAt: null,
+        expiresAt: null
       }
     });
   } catch (error) {
