@@ -273,18 +273,18 @@ export default function PurchaseModal() {
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.94, y: 20 }}
         transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-        className="card"
+        className="card modal-dialog-card"
         style={{
           position: 'relative',
           width: '100%',
           maxWidth: '680px',
-          maxHeight: '92vh',
+          maxHeight: 'calc(92vh - var(--safe-area-top) - var(--safe-area-bottom))',
           overflowY: 'auto',
           background: 'linear-gradient(180deg, rgba(14, 18, 28, 0.98) 0%, rgba(8, 10, 16, 0.99) 100%)',
           border: '1px solid rgba(0, 136, 255, 0.3)',
           boxShadow: '0 25px 70px -10px rgba(0, 0, 0, 0.85), 0 0 35px rgba(0, 136, 255, 0.25)',
           borderRadius: '24px',
-          padding: '2rem 1.8rem',
+          padding: 'clamp(1.25rem, 3.5vw, 2rem) clamp(1rem, 3.5vw, 1.8rem)',
           zIndex: 10
         }}
       >
@@ -293,19 +293,20 @@ export default function PurchaseModal() {
           onClick={closeCheckout}
           style={{
             position: 'absolute',
-            top: '18px',
-            right: '18px',
+            top: 'clamp(12px, 2.5vw, 18px)',
+            right: 'clamp(12px, 2.5vw, 18px)',
             background: 'rgba(255, 255, 255, 0.05)',
             border: '1px solid rgba(255, 255, 255, 0.08)',
             color: '#a1a1aa',
-            width: '36px',
-            height: '36px',
+            width: '38px',
+            height: '38px',
             borderRadius: '50%',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
-            transition: 'all 0.2s ease'
+            transition: 'all 0.2s ease',
+            zIndex: 2
           }}
           onMouseEnter={(e) => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.background = 'rgba(255,255,255,0.12)'; }}
           onMouseLeave={(e) => { e.currentTarget.style.color = '#a1a1aa'; e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
@@ -320,7 +321,7 @@ export default function PurchaseModal() {
         {currentStep === 'payment' && (
           <div>
             {/* Header: Plan Summary */}
-            <div style={{ marginBottom: '1.5rem', paddingRight: '2rem' }}>
+            <div style={{ marginBottom: '1.25rem', paddingRight: '2.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem' }}>
                 <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: 'rgba(0, 136, 255, 0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Shield size={16} color="#00f0ff" />
@@ -329,7 +330,7 @@ export default function PurchaseModal() {
                   Live License Payment & Automated Delivery
                 </span>
               </div>
-              <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff', marginBottom: '0.4rem' }}>
+              <h2 style={{ fontSize: 'clamp(1.25rem, 3.5vw, 1.5rem)', fontWeight: 800, color: '#fff', marginBottom: '0.4rem' }}>
                 Secure Checkout: {currentPlan.name}
               </h2>
               <p className="text-muted" style={{ fontSize: '0.86rem' }}>
@@ -341,9 +342,9 @@ export default function PurchaseModal() {
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(115px, 1fr))',
                 gap: '8px',
-                marginBottom: '1.5rem',
+                marginBottom: '1.25rem',
                 background: 'rgba(6, 8, 12, 0.65)',
                 padding: '6px',
                 borderRadius: '14px',
@@ -391,7 +392,9 @@ export default function PurchaseModal() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                marginBottom: '1.5rem'
+                flexWrap: 'wrap',
+                gap: '0.75rem',
+                marginBottom: '1.25rem'
               }}
             >
               <div>

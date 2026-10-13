@@ -296,7 +296,7 @@ export default function Login() {
         style={{
           width: '100%',
           maxWidth: '460px',
-          padding: '2.5rem 2rem',
+          padding: 'clamp(1.5rem, 4vw, 2.5rem) clamp(1.15rem, 3.5vw, 2rem)',
           background: 'rgba(12, 14, 20, 0.78)',
           border: '1px solid rgba(255, 255, 255, 0.08)',
           boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.7), 0 0 35px rgba(0, 136, 255, 0.1)',

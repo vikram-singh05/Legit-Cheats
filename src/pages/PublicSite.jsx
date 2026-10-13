@@ -254,9 +254,10 @@ export default function PublicSite() {
             initial={{ opacity: 0, y: 25, filter: 'blur(8px)' }}
             animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
             transition={{ duration: 0.8, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+            className="hero-heading"
             style={{
-              fontSize: 'clamp(2.5rem, 5.2vw, 4.25rem)',
-              lineHeight: 1.12,
+              fontSize: 'clamp(2.1rem, 5.2vw, 4.25rem)',
+              lineHeight: 1.14,
               fontWeight: 800,
               letterSpacing: '-0.035em',
               marginBottom: '1.25rem'
@@ -491,7 +492,7 @@ export default function PublicSite() {
           >
             <div className="grid md:grid-cols-2 gap-6 items-stretch">
               {/* Simulator Viewport with 3D GTA V Model & Skeleton */}
-              <div style={{ minHeight: '430px', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ minHeight: 'clamp(320px, 45vh, 430px)', display: 'flex', flexDirection: 'column' }}>
                 <GtaSimulator
                   aimbotActive={demoAim}
                   espActive={demoEsp}

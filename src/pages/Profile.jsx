@@ -213,7 +213,7 @@ export default function Profile() {
           transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
           className="card"
           style={{
-            padding: '2rem',
+            padding: 'clamp(1.2rem, 3.5vw, 2rem)',
             marginBottom: '1.75rem',
             background: 'linear-gradient(135deg, rgba(14, 18, 28, 0.85) 0%, rgba(8, 10, 16, 0.92) 100%)',
             border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -667,7 +667,7 @@ export default function Profile() {
           transition={{ duration: 0.5, delay: 0.25, ease: [0.16, 1, 0.3, 1] }}
           className="card"
           style={{
-            padding: '2rem',
+            padding: 'clamp(1.2rem, 3.5vw, 2rem)',
             marginBottom: '1.75rem',
             background: 'rgba(12, 15, 24, 0.75)',
             border: '1px solid rgba(255, 255, 255, 0.08)'
@@ -787,7 +787,7 @@ export default function Profile() {
           transition={{ duration: 0.5, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
           className="card"
           style={{
-            padding: '2rem',
+            padding: 'clamp(1.2rem, 3.5vw, 2rem)',
             marginBottom: '1.75rem',
             background: 'rgba(12, 15, 24, 0.75)',
             border: '1px solid rgba(255, 255, 255, 0.08)'

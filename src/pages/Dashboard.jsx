@@ -715,7 +715,7 @@ export default function Dashboard() {
             </div>
           </motion.div>
 
-          <motion.div whileHover={{ y: -5 }} className="card" style={{ padding: '1.15rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+          <motion.div whileHover={{ y: -5 }} className="card col-span-2 sm:col-span-1" style={{ padding: '1.15rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
             <motion.div
               animate={{ rotate: [0, 10, -10, 0] }}
               transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut', delay: 1.6 }}
@@ -1060,7 +1060,7 @@ export default function Dashboard() {
                   </motion.button>
                 </motion.div>
               ) : (
-                <div style={{ overflowX: 'auto', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.06)', flex: 1, paddingBottom: '0.5rem' }}>
+                <div className="overflow-x-auto scroll-touch" style={{ borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.06)', flex: 1, paddingBottom: '0.5rem', WebkitOverflowScrolling: 'touch' }}>
                   <table style={{ width: '100%', minWidth: '950px', borderCollapse: 'collapse', textAlign: 'left' }}>
                     <thead>
                       <tr style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid rgba(255, 255, 255, 0.07)' }}>
