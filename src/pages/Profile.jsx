@@ -477,9 +477,9 @@ export default function Profile() {
 
           {hasPurchased && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', marginTop: '1rem', paddingTop: '0.85rem', borderTop: '1px solid rgba(255, 255, 255, 0.05)', fontSize: '0.8rem', color: '#a1a1aa' }}>
-              <div>Hardware Binding: <strong style={{ color: '#10b981' }}>Unbound (Auto-binds on 1st Launch)</strong></div>
+              <div>Hardware Binding: <strong style={{ color: activeLicense.hwid ? '#00f0ff' : '#10b981' }}>{activeLicense.hwid ? `Bound (${activeLicense.hwid.substring(0, 8)}...)` : 'Unbound (Auto-binds on 1st Launch)'}</strong></div>
               <div>Duration: <strong style={{ color: '#fff' }}>{activeLicense.durationDays ? `${activeLicense.durationDays} Days` : 'Permanent Lifetime'}</strong></div>
-              <div>Verification: <strong style={{ color: '#00f0ff' }}>Cryptographic Hash Verified</strong></div>
+              <div>Countdown: <strong style={{ color: activeLicense.hwid ? '#10b981' : '#38bdf8' }}>{activeLicense.hwid ? 'Active (Reverse Countdown)' : 'Standby (Starts on 1st HWID login)'}</strong></div>
             </div>
           )}
         </motion.div>

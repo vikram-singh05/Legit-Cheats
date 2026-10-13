@@ -110,6 +110,8 @@ export default function Dashboard() {
       note: adminNote.trim() || null,
       status: 'active',
       hwid: null,
+      activated_at: null,
+      expires_at: null,
       created_at: new Date().toISOString()
     };
     
@@ -152,14 +154,14 @@ export default function Dashboard() {
 
   const handleResetHWID = async (id, licenseKey) => {
     const previousLicenses = [...licenses];
-    // Optimistic UI Update
-    setLicenses(licenses.map(l => l.id === id ? { ...l, hwid: null, activated_at: null } : l));
+    // Optimistic UI Update: Clear HWID, activation, and expiration
+    setLicenses(licenses.map(l => l.id === id ? { ...l, hwid: null, activated_at: null, expires_at: null } : l));
     showToast(`HWID unbind cleared for ${licenseKey}`);
     
     try {
       const { error } = await supabase
         .from('licenses')
-        .update({ hwid: null, activated_at: null })
+        .update({ hwid: null, activated_at: null, expires_at: null })
         .eq('id', id);
 
       if (error) throw error;
@@ -257,14 +259,16 @@ export default function Dashboard() {
     };
   };
 
-  // Helper to determine license expiration and relative time
+  // Helper to determine license expiration, activation status, and reverse countdown
   const getLicenseExpiryInfo = (lic) => {
     if (lic.is_lifetime) {
       return {
         isExpired: false,
+        isActivated: true,
         badgeText: 'LIFETIME',
         badgeColor: '#c084fc',
         badgeBg: 'rgba(168, 85, 247, 0.15)',
+        badgeBorder: 'rgba(168, 85, 247, 0.3)',
         remainingText: 'Permanent'
       };
     }
@@ -272,9 +276,11 @@ export default function Dashboard() {
     if (lic.status === 'banned') {
       return {
         isExpired: false,
+        isActivated: false,
         badgeText: 'BANNED',
         badgeColor: '#f87171',
         badgeBg: 'rgba(239, 68, 68, 0.15)',
+        badgeBorder: 'rgba(239, 68, 68, 0.3)',
         remainingText: 'Revoked'
       };
     }
@@ -283,37 +289,56 @@ export default function Dashboard() {
     if (durationDays <= 0) {
       return {
         isExpired: false,
+        isActivated: true,
         badgeText: 'ACTIVE',
         badgeColor: '#34d399',
         badgeBg: 'rgba(16, 185, 129, 0.15)',
+        badgeBorder: 'rgba(16, 185, 129, 0.3)',
         remainingText: 'Active'
       };
     }
 
-    // Reference date: activated_at if bound, or created_at
-    const baseDateStr = lic.activated_at || lic.created_at;
-    if (!baseDateStr) {
+    // CRITICAL: Countdown only begins AFTER HWID registration / activation!
+    // If not yet bound to a hardware ID, the key does NOT expire and countdown has not started.
+    const isBound = !!(lic.hwid && String(lic.hwid).trim());
+    const isActivated = !!(lic.activated_at || isBound);
+
+    if (!isActivated) {
       return {
         isExpired: false,
+        isActivated: false,
+        badgeText: 'READY',
+        badgeColor: '#38bdf8', // Vibrant Sky / Cyan
+        badgeBg: 'rgba(56, 189, 248, 0.12)',
+        badgeBorder: 'rgba(56, 189, 248, 0.3)',
+        remainingText: `${durationDays}d (Starts on 1st login)`
+      };
+    }
+
+    // Key has registered a HWID. Expiration is calculated from activated_at (or expires_at if set)
+    let expiresTime = null;
+    if (lic.expires_at) {
+      expiresTime = new Date(lic.expires_at).getTime();
+    } else {
+      const baseDateStr = lic.activated_at || lic.created_at;
+      const baseTime = new Date(baseDateStr).getTime();
+      if (!isNaN(baseTime)) {
+        expiresTime = baseTime + durationDays * 24 * 60 * 60 * 1000;
+      }
+    }
+
+    if (!expiresTime || isNaN(expiresTime)) {
+      return {
+        isExpired: false,
+        isActivated: true,
         badgeText: 'ACTIVE',
         badgeColor: '#34d399',
         badgeBg: 'rgba(16, 185, 129, 0.15)',
+        badgeBorder: 'rgba(16, 185, 129, 0.3)',
         remainingText: `${durationDays} Days`
       };
     }
 
-    const baseTime = new Date(baseDateStr).getTime();
-    if (isNaN(baseTime)) {
-      return {
-        isExpired: false,
-        badgeText: 'ACTIVE',
-        badgeColor: '#34d399',
-        badgeBg: 'rgba(16, 185, 129, 0.15)',
-        remainingText: `${durationDays} Days`
-      };
-    }
-
-    const expiresTime = baseTime + durationDays * 24 * 60 * 60 * 1000;
     const now = Date.now();
     const isExpired = now > expiresTime;
 
@@ -324,6 +349,7 @@ export default function Dashboard() {
 
       return {
         isExpired: true,
+        isActivated: true,
         badgeText: 'EXPIRED',
         badgeColor: '#fb7185',
         badgeBg: 'rgba(244, 63, 94, 0.15)',
@@ -332,16 +358,29 @@ export default function Dashboard() {
       };
     }
 
+    // Active Reverse Countdown
     const remainingMs = expiresTime - now;
     const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
     const remainingDays = Math.floor(remainingHours / 24);
-    const remainingText = remainingDays > 0 ? `${remainingDays}d ${remainingHours % 24}h left` : `${remainingHours}h left`;
+    const remHoursInDay = remainingHours % 24;
+
+    let remainingText = '';
+    if (remainingDays > 0) {
+      remainingText = `${remainingDays}d ${remHoursInDay}h left`;
+    } else if (remainingHours > 1) {
+      remainingText = `${remainingHours}h left`;
+    } else {
+      const remainingMinutes = Math.max(1, Math.ceil(remainingMs / (60 * 1000)));
+      remainingText = `${remainingMinutes}m left`;
+    }
 
     return {
       isExpired: false,
+      isActivated: true,
       badgeText: 'ACTIVE',
       badgeColor: '#34d399',
       badgeBg: 'rgba(16, 185, 129, 0.15)',
+      badgeBorder: 'rgba(16, 185, 129, 0.3)',
       remainingText
     };
   };
@@ -357,12 +396,14 @@ export default function Dashboard() {
         (claimInfo.claimedEmail && claimInfo.claimedEmail.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (claimInfo.displayNote && claimInfo.displayNote.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (lic.hwid && lic.hwid.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (searchQuery.toLowerCase() === 'expired' && expiryInfo.isExpired);
+        (searchQuery.toLowerCase() === 'expired' && expiryInfo.isExpired) ||
+        (searchQuery.toLowerCase() === 'ready' && !expiryInfo.isActivated && !expiryInfo.isExpired);
 
       if (!matchesQuery) return false;
 
       if (statusFilter === 'all') return true;
       if (statusFilter === 'active') return !expiryInfo.isExpired && lic.status !== 'banned';
+      if (statusFilter === 'ready') return !expiryInfo.isActivated && !expiryInfo.isExpired && !lic.is_lifetime && lic.status !== 'banned';
       if (statusFilter === 'expired') return expiryInfo.isExpired;
       if (statusFilter === 'bound') return !!lic.hwid;
       if (statusFilter === 'unbound') return !lic.hwid;
@@ -374,6 +415,10 @@ export default function Dashboard() {
   const activeBoundCount = licenses.filter(l => l.hwid).length;
   const lifetimeCount = licenses.filter(l => l.is_lifetime).length;
   const expiredCount = licenses.filter(l => getLicenseExpiryInfo(l).isExpired).length;
+  const readyCount = licenses.filter(l => {
+    const info = getLicenseExpiryInfo(l);
+    return !info.isExpired && !info.isActivated && !l.is_lifetime && l.status !== 'banned';
+  }).length;
 
   /* ─── Animation Variants ─── */
   const containerVariants = {
@@ -946,7 +991,7 @@ export default function Dashboard() {
                   alignItems: 'center'
                 }}
               >
-                {['all', 'active', 'expired', 'bound', 'unbound', 'banned'].map((status) => (
+                {['all', 'active', 'ready', 'expired', 'bound', 'unbound', 'banned'].map((status) => (
                   <motion.button
                     key={status}
                     whileHover={{ scale: 1.05 }}
@@ -958,10 +1003,18 @@ export default function Dashboard() {
                       borderRadius: '8px',
                       border: 'none',
                       background: statusFilter === status
-                        ? (status === 'expired' ? 'rgba(244, 63, 94, 0.25)' : 'rgba(0, 136, 255, 0.25)')
+                        ? (status === 'expired'
+                            ? 'rgba(244, 63, 94, 0.25)'
+                            : status === 'ready'
+                            ? 'rgba(56, 189, 248, 0.25)'
+                            : 'rgba(0, 136, 255, 0.25)')
                         : 'transparent',
                       color: statusFilter === status
-                        ? (status === 'expired' ? '#fb7185' : '#fff')
+                        ? (status === 'expired'
+                            ? '#fb7185'
+                            : status === 'ready'
+                            ? '#38bdf8'
+                            : '#fff')
                         : '#8e92a4',
                       fontSize: '0.8rem',
                       fontWeight: 600,
@@ -970,7 +1023,7 @@ export default function Dashboard() {
                       transition: 'background 0.2s ease, color 0.2s ease'
                     }}
                   >
-                    {status}
+                    {status === 'ready' ? `Ready (${readyCount})` : status}
                   </motion.button>
                 ))}
               </div>
@@ -1089,10 +1142,16 @@ export default function Dashboard() {
                                       transition: 'background 0.3s ease, color 0.3s ease'
                                     }}
                                   >
-                                    {expiryInfo.isExpired && <Clock size={11} />}
+                                    {expiryInfo.isExpired ? (
+                                      <Clock size={11} />
+                                    ) : !expiryInfo.isActivated && !lic.is_lifetime && !isBanned ? (
+                                      <Sparkles size={11} />
+                                    ) : isBound && !isBanned ? (
+                                      <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#10b981', boxShadow: '0 0 5px #10b981' }} />
+                                    ) : null}
                                     {expiryInfo.badgeText}
                                   </motion.span>
-                                  <div style={{ fontSize: '0.71rem', color: expiryInfo.isExpired ? '#fb7185' : '#71717a', marginTop: '3px', fontWeight: 500 }}>
+                                  <div style={{ fontSize: '0.71rem', color: expiryInfo.isExpired ? '#fb7185' : (!expiryInfo.isActivated ? '#38bdf8' : '#71717a'), marginTop: '3px', fontWeight: 500 }}>
                                     {expiryInfo.remainingText}
                                   </div>
                                 </div>

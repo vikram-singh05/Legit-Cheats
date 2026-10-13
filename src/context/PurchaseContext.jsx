@@ -300,7 +300,9 @@ export function PurchaseProvider({ children }) {
         userEmail: user.email,
         userId: user.id,
         key: dbLicense.license_key,
-        hwid: dbLicense.hwid || null
+        hwid: dbLicense.hwid || null,
+        activatedAt: dbLicense.activated_at || null,
+        expiresAt: dbLicense.expires_at || null
       };
 
       const updatedList = [verifiedOrder, ...purchases];
