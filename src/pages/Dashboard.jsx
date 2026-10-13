@@ -301,27 +301,25 @@ export default function Dashboard() {
     // CRITICAL: Countdown only begins AFTER HWID registration / activation!
     // If not yet bound to a hardware ID, the key does NOT expire and countdown has not started.
     const isBound = !!(lic.hwid && String(lic.hwid).trim());
-    const isActivated = !!(lic.activated_at || isBound);
 
-    if (!isActivated) {
+    if (!isBound) {
       return {
         isExpired: false,
         isActivated: false,
-        badgeText: 'READY',
+        badgeText: 'STANDBY',
         badgeColor: '#38bdf8', // Vibrant Sky / Cyan
         badgeBg: 'rgba(56, 189, 248, 0.12)',
         badgeBorder: 'rgba(56, 189, 248, 0.3)',
-        remainingText: `${durationDays}d (Starts on 1st login)`
+        remainingText: `${durationDays}d (Starts on HWID login)`
       };
     }
 
-    // Key has registered a HWID. Expiration is calculated from activated_at (or expires_at if set)
+    // Key has registered a HWID. Expiration is calculated from expires_at or activated_at (NEVER created_at)
     let expiresTime = null;
     if (lic.expires_at) {
       expiresTime = new Date(lic.expires_at).getTime();
-    } else {
-      const baseDateStr = lic.activated_at || lic.created_at;
-      const baseTime = new Date(baseDateStr).getTime();
+    } else if (lic.activated_at) {
+      const baseTime = new Date(lic.activated_at).getTime();
       if (!isNaN(baseTime)) {
         expiresTime = baseTime + durationDays * 24 * 60 * 60 * 1000;
       }
@@ -397,13 +395,13 @@ export default function Dashboard() {
         (claimInfo.displayNote && claimInfo.displayNote.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (lic.hwid && lic.hwid.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (searchQuery.toLowerCase() === 'expired' && expiryInfo.isExpired) ||
-        (searchQuery.toLowerCase() === 'ready' && !expiryInfo.isActivated && !expiryInfo.isExpired);
+        ((searchQuery.toLowerCase() === 'standby' || searchQuery.toLowerCase() === 'ready') && !expiryInfo.isActivated && !expiryInfo.isExpired);
 
       if (!matchesQuery) return false;
 
       if (statusFilter === 'all') return true;
-      if (statusFilter === 'active') return !expiryInfo.isExpired && lic.status !== 'banned';
-      if (statusFilter === 'ready') return !expiryInfo.isActivated && !expiryInfo.isExpired && !lic.is_lifetime && lic.status !== 'banned';
+      if (statusFilter === 'active') return expiryInfo.isActivated && !expiryInfo.isExpired && lic.status !== 'banned';
+      if (statusFilter === 'standby' || statusFilter === 'ready') return !expiryInfo.isActivated && !expiryInfo.isExpired && !lic.is_lifetime && lic.status !== 'banned';
       if (statusFilter === 'expired') return expiryInfo.isExpired;
       if (statusFilter === 'bound') return !!lic.hwid;
       if (statusFilter === 'unbound') return !lic.hwid;
@@ -991,7 +989,7 @@ export default function Dashboard() {
                   alignItems: 'center'
                 }}
               >
-                {['all', 'active', 'ready', 'expired', 'bound', 'unbound', 'banned'].map((status) => (
+                {['all', 'active', 'standby', 'expired', 'bound', 'unbound', 'banned'].map((status) => (
                   <motion.button
                     key={status}
                     whileHover={{ scale: 1.05 }}
@@ -1005,14 +1003,14 @@ export default function Dashboard() {
                       background: statusFilter === status
                         ? (status === 'expired'
                             ? 'rgba(244, 63, 94, 0.25)'
-                            : status === 'ready'
+                            : status === 'standby'
                             ? 'rgba(56, 189, 248, 0.25)'
                             : 'rgba(0, 136, 255, 0.25)')
                         : 'transparent',
                       color: statusFilter === status
                         ? (status === 'expired'
                             ? '#fb7185'
-                            : status === 'ready'
+                            : status === 'standby'
                             ? '#38bdf8'
                             : '#fff')
                         : '#8e92a4',
@@ -1023,7 +1021,7 @@ export default function Dashboard() {
                       transition: 'background 0.2s ease, color 0.2s ease'
                     }}
                   >
-                    {status === 'ready' ? `Ready (${readyCount})` : status}
+                    {status === 'standby' ? `Standby (${readyCount})` : status}
                   </motion.button>
                 ))}
               </div>
