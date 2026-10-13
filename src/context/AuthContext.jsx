@@ -11,7 +11,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   // Authenticate and fetch user profile with strict role validation
-  // --- SECURITY: Only trust roles from profiles table or app_metadata (server-writable only) ---
+  // --- SECURITY: Only trust roles from profiles table, app_metadata (server-writable), or designated admin config ---
   const fetchProfileAndRole = useCallback(async (currentUser) => {
     if (!currentUser) {
       setUser(null);
@@ -24,27 +24,54 @@ export function AuthProvider({ children }) {
 
     setUser(currentUser);
 
+    const userEmail = (currentUser.email || '').trim().toLowerCase();
+    const adminEmails = [
+      'jangravikram3105@gmail.com',
+      ...(import.meta.env.VITE_ADMIN_EMAILS
+        ? import.meta.env.VITE_ADMIN_EMAILS.split(',').map(e => e.trim().toLowerCase())
+        : [])
+    ].filter(Boolean);
+
+    const isDesignatedAdmin = Boolean(userEmail && adminEmails.includes(userEmail));
+
     try {
       // Query profiles table directly from authenticated Supabase session
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', currentUser.id)
         .maybeSingle();
 
+      // If user is a designated admin email, ensure database role is 'admin' via RPC
+      if (isDesignatedAdmin && (!data || data.role !== 'admin')) {
+        try {
+          await supabase.rpc('make_user_admin', { target_email: userEmail });
+          const { data: refreshedProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', currentUser.id)
+            .maybeSingle();
+          if (refreshedProfile) {
+            data = refreshedProfile;
+          }
+        } catch (syncErr) {
+          console.warn('Admin self-healing sync warning:', syncErr);
+        }
+      }
+
       if (!error && data) {
-        setProfile(data);
-        setIsAdmin(data.role === 'admin');
+        const adminStatus = data.role === 'admin' || isDesignatedAdmin;
+        setProfile({ ...data, role: adminStatus ? 'admin' : data.role });
+        setIsAdmin(adminStatus);
       } else {
-        // --- SECURITY FIX (HIGH-04): Only read role from app_metadata (server-writable) ---
-        // NEVER read from user_metadata.role — users can modify their own user_metadata
-        const serverRole = currentUser.app_metadata?.role || 'user';
+        // Fallback to app_metadata or designated admin check
+        const serverRole = isDesignatedAdmin ? 'admin' : (currentUser.app_metadata?.role || 'user');
         setProfile({ id: currentUser.id, email: currentUser.email, role: serverRole });
-        setIsAdmin(serverRole === 'admin');
+        setIsAdmin(serverRole === 'admin' || isDesignatedAdmin);
       }
     } catch (err) {
       console.error('Security alert: Failed to verify profile role:', err);
-      setIsAdmin(false);
+      setIsAdmin(isDesignatedAdmin);
     } finally {
       setLoading(false);
     }

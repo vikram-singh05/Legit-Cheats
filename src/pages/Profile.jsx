@@ -12,7 +12,7 @@ import { usePurchase } from '../context/PurchaseContext';
 import { PRICING_PLANS, DUMMY_DOWNLOAD_URL, APP_FILE_NAME, APP_VERSION } from '../lib/plans';
 
 export default function Profile() {
-  const { user, signOut } = useAuth();
+  const { user, isAdmin, signOut } = useAuth();
   const {
     purchases,
     activeLicense,
@@ -295,6 +295,90 @@ export default function Profile() {
             </div>
           </div>
         </motion.div>
+
+        {/* =========================================================================
+            ADMINISTRATOR COMMAND CENTER BANNER (Rendered if user is Admin)
+           ========================================================================= */}
+        {isAdmin && (
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+            style={{
+              background: 'linear-gradient(135deg, rgba(0, 136, 255, 0.16) 0%, rgba(0, 240, 255, 0.08) 50%, rgba(138, 43, 226, 0.12) 100%)',
+              border: '1px solid rgba(0, 240, 255, 0.35)',
+              borderRadius: '16px',
+              padding: '1.4rem 1.6rem',
+              marginBottom: '1.75rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '1.25rem',
+              flexWrap: 'wrap',
+              boxShadow: '0 8px 32px rgba(0, 136, 255, 0.15)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', minWidth: '260px', flex: 1 }}>
+              <div
+                style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '12px',
+                  background: 'rgba(0, 240, 255, 0.12)',
+                  border: '1px solid rgba(0, 240, 255, 0.35)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0
+                }}
+              >
+                <Terminal size={22} color="#00f0ff" />
+              </div>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#fff', margin: 0 }}>
+                    Admin Command Center
+                  </h3>
+                  <span
+                    style={{
+                      fontSize: '0.68rem',
+                      fontWeight: 800,
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      background: 'rgba(0, 240, 255, 0.18)',
+                      color: '#00f0ff',
+                      border: '1px solid rgba(0, 240, 255, 0.4)',
+                      letterSpacing: '0.5px'
+                    }}
+                  >
+                    ELEVATED PERMISSIONS ACTIVE
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.82rem', color: '#a1a1aa', margin: 0, lineHeight: 1.5 }}>
+                  Manage client license keys, review registered HWID bindings, mint VIP keys, and monitor customer activity.
+                </p>
+              </div>
+            </div>
+
+            <Link
+              to="/dashboard"
+              className="btn btn-primary"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.7rem 1.4rem',
+                fontSize: '0.88rem',
+                fontWeight: 700,
+                boxShadow: '0 0 20px rgba(0, 240, 255, 0.3)'
+              }}
+            >
+              <Terminal size={16} />
+              <span>Launch Admin Portal</span>
+              <ArrowRight size={16} />
+            </Link>
+          </motion.div>
+        )}
 
         {/* =========================================================================
             SECTION 1: LICENSE KEY DISPLAY (PURCHASED VS NOT PURCHASED)

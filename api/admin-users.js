@@ -91,6 +91,23 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: 'Access Denied: Admin authorization required.' });
     }
 
+    // Ensure database profile role is synced to 'admin' in Supabase
+    if (isAdmin && supabaseServiceKey) {
+      try {
+        await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${authUser.id}`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': supabaseAnonKey,
+            'Authorization': `Bearer ${supabaseServiceKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ role: 'admin', updated_at: new Date().toISOString() })
+        });
+      } catch (syncErr) {
+        // Non-blocking background sync
+      }
+    }
+
     const userMap = {};
 
     // 3. Fetch user directory with Service Role Key

@@ -192,6 +192,22 @@ function MainNavbar() {
                 My Profile
               </Link>
             )}
+            {isAdmin && (
+              <Link
+                to="/dashboard"
+                className="nav-link"
+                style={{
+                  color: location.pathname.startsWith('/dashboard') ? '#00f0ff' : '#38bdf8',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem'
+                }}
+              >
+                <Terminal size={14} color="#00f0ff" />
+                <span>Admin Portal</span>
+              </Link>
+            )}
           </div>
 
           {/* Right Action Items */}
@@ -230,7 +246,6 @@ function MainNavbar() {
                 animate={{ opacity: 1, scale: 1 }}
                 whileHover={{ scale: 1.04 }}
                 whileTap={{ scale: 0.96 }}
-                className="hidden sm:block"
               >
                 <Link
                   to="/dashboard"
@@ -241,7 +256,7 @@ function MainNavbar() {
                     padding: '6px 12px',
                     borderRadius: '20px',
                     background: 'linear-gradient(135deg, rgba(0, 136, 255, 0.25) 0%, rgba(0, 240, 255, 0.15) 100%)',
-                    border: '1px solid rgba(0, 240, 255, 0.4)',
+                    border: '1px solid rgba(0, 240, 255, 0.45)',
                     boxShadow: '0 0 15px rgba(0, 136, 255, 0.3)',
                     color: '#00f0ff',
                     fontSize: '0.8rem',
