@@ -5,7 +5,7 @@ import {
   Key, Download, Shield, CheckCircle2, Lock,
   Copy, Check, Sparkles, RefreshCw, ArrowRight,
   Clock, AlertTriangle, AlertCircle, ExternalLink,
-  ChevronRight, Terminal, User, FileText, Zap, Laptop
+  ChevronRight, Terminal, User, FileText, Zap, Laptop, Trash2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { usePurchase } from '../context/PurchaseContext';
@@ -15,14 +15,20 @@ export default function Profile() {
   const { user, isAdmin, signOut } = useAuth();
   const {
     purchases,
+    verifiedPurchases,
     activeLicense,
+    activeKeyId,
+    setActiveKeyId,
+    removeKey,
     hasPurchased,
     openCheckout,
     verifyPurchase,
     redeemExternalKey,
     downloadApp,
     appDownloadUrl,
-    downloadNotice
+    downloadNotice,
+    syncWithServer,
+    refreshPurchases
   } = usePurchase();
 
   const navigate = useNavigate();
@@ -37,6 +43,12 @@ export default function Profile() {
   // Key copy state
   const [copiedKey, setCopiedKey] = useState(false);
 
+  // Key removal state
+  const [keyToRemove, setKeyToRemove] = useState(null);
+  const [isRemovingKey, setIsRemovingKey] = useState(false);
+  const [actionNotice, setActionNotice] = useState(null);
+  const [syncingServer, setSyncingServer] = useState(false);
+
   // External Key tool state
   const [externalKeyInput, setExternalKeyInput] = useState('');
   const [redeemingKey, setRedeemingKey] = useState(false);
@@ -44,6 +56,99 @@ export default function Profile() {
   const [redeemError, setRedeemError] = useState('');
 
   const [fileSize, setFileSize] = useState('1.92 MB');
+
+  // Trigger server license sync on mount
+  useEffect(() => {
+    if (syncWithServer) {
+      syncWithServer();
+    }
+  }, [syncWithServer]);
+
+  const handleSyncCloud = async () => {
+    setSyncingServer(true);
+    try {
+      await syncWithServer();
+      setActionNotice('Synced with Supabase license cloud.');
+      setTimeout(() => setActionNotice(null), 3000);
+    } catch (_) {
+    } finally {
+      setSyncingServer(false);
+    }
+  };
+
+  // Helper to compute live timing & countdown for any license
+  const getLicenseTiming = (lic) => {
+    if (!lic) return null;
+    if (lic.isLifetime) {
+      return {
+        badge: 'LIFETIME',
+        badgeColor: '#c084fc',
+        badgeBg: 'rgba(192, 132, 252, 0.15)',
+        statusText: 'Permanent Lifetime Access',
+        isExpired: false,
+        isStandby: false
+      };
+    }
+
+    const isBound = !!lic.hwid;
+    if (!isBound) {
+      return {
+        badge: 'STANDBY',
+        badgeColor: '#38bdf8',
+        badgeBg: 'rgba(56, 189, 248, 0.15)',
+        statusText: `${lic.durationDays || 30} Days (Starts on 1st HWID Login)`,
+        isExpired: false,
+        isStandby: true
+      };
+    }
+
+    let expTime = null;
+    if (lic.expiresAt) {
+      expTime = new Date(lic.expiresAt).getTime();
+    } else if (lic.activatedAt && lic.durationDays) {
+      expTime = new Date(lic.activatedAt).getTime() + Number(lic.durationDays) * 24 * 60 * 60 * 1000;
+    }
+
+    if (!expTime || isNaN(expTime)) {
+      return {
+        badge: 'ACTIVE',
+        badgeColor: '#10b981',
+        badgeBg: 'rgba(16, 185, 129, 0.15)',
+        statusText: `${lic.durationDays || 30} Days`,
+        isExpired: false,
+        isStandby: false
+      };
+    }
+
+    const now = Date.now();
+    if (now > expTime) {
+      const daysAgo = Math.floor((now - expTime) / (24 * 60 * 60 * 1000));
+      return {
+        badge: 'EXPIRED',
+        badgeColor: '#f43f5e',
+        badgeBg: 'rgba(244, 63, 94, 0.15)',
+        statusText: `Expired ${daysAgo > 0 ? `${daysAgo}d ago` : 'recently'}`,
+        isExpired: true,
+        isStandby: false
+      };
+    }
+
+    const remMs = expTime - now;
+    const remHours = Math.ceil(remMs / (60 * 60 * 1000));
+    const remDays = Math.floor(remHours / 24);
+    const remHoursInDay = remHours % 24;
+
+    let countdownText = remDays > 0 ? `${remDays}d ${remHoursInDay}h left` : `${remHours}h left`;
+
+    return {
+      badge: 'ACTIVE',
+      badgeColor: '#10b981',
+      badgeBg: 'rgba(16, 185, 129, 0.15)',
+      statusText: countdownText,
+      isExpired: false,
+      isStandby: false
+    };
+  };
 
   useEffect(() => {
     if (appDownloadUrl) {
@@ -277,12 +382,12 @@ export default function Profile() {
           </div>
 
           {/* Quick Metrics */}
-          <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <div style={{ background: 'rgba(0,0,0,0.4)', padding: '0.75rem 1.15rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
               <div style={{ fontSize: '0.74rem', color: '#8e92a4', marginBottom: '0.2rem' }}>License Status</div>
               <div style={{ fontSize: '0.94rem', fontWeight: 700, color: hasPurchased ? '#10b981' : '#ef4444', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 {hasPurchased ? <CheckCircle2 size={15} /> : <Lock size={14} />}
-                <span>{hasPurchased ? 'Active & Valid' : 'Not Purchased'}</span>
+                <span>{hasPurchased ? (verifiedPurchases.length > 1 ? `${verifiedPurchases.length} Keys Active` : 'Active & Valid') : 'Not Purchased'}</span>
               </div>
             </div>
 
@@ -293,6 +398,28 @@ export default function Profile() {
                 <span>{hasPurchased ? 'Unlocked (v3.4.2)' : 'Locked'}</span>
               </div>
             </div>
+
+            <button
+              onClick={handleSyncCloud}
+              disabled={syncingServer}
+              className="btn btn-outline"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                padding: '0.75rem 1.15rem',
+                borderRadius: '12px',
+                fontSize: '0.8rem',
+                background: 'rgba(0, 136, 255, 0.08)',
+                borderColor: 'rgba(0, 240, 255, 0.25)',
+                color: '#00f0ff',
+                cursor: syncingServer ? 'wait' : 'pointer'
+              }}
+              title="Synchronize purchased licenses directly with Supabase"
+            >
+              <RefreshCw size={14} className={syncingServer ? 'spin' : ''} />
+              <span>{syncingServer ? 'Syncing Cloud...' : 'Sync Cloud Keys'}</span>
+            </button>
           </div>
         </motion.div>
 
@@ -428,6 +555,44 @@ export default function Profile() {
             )}
           </div>
 
+          {/* MULTI-KEY SWITCHER: If user owns multiple keys, show switcher tabs */}
+          {verifiedPurchases.length > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1.25rem', flexWrap: 'wrap', padding: '0.6rem 0.85rem', background: 'rgba(0,0,0,0.3)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <span style={{ fontSize: '0.78rem', color: '#a1a1aa', fontWeight: 600 }}>Your Licenses ({verifiedPurchases.length}):</span>
+              {verifiedPurchases.map((p, idx) => {
+                const isCurrent = activeLicense?.key === p.key;
+                const timing = getLicenseTiming(p);
+                return (
+                  <button
+                    key={p.key || idx}
+                    type="button"
+                    onClick={() => setActiveKeyId(p.key)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.45rem',
+                      padding: '5px 12px',
+                      borderRadius: '8px',
+                      background: isCurrent ? 'rgba(0, 136, 255, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+                      border: isCurrent ? '1px solid rgba(0, 240, 255, 0.55)' : '1px solid rgba(255, 255, 255, 0.08)',
+                      color: isCurrent ? '#00f0ff' : '#d4d4d8',
+                      fontSize: '0.78rem',
+                      fontWeight: isCurrent ? 700 : 500,
+                      cursor: 'pointer',
+                      boxShadow: isCurrent ? '0 0 12px rgba(0, 240, 255, 0.2)' : 'none'
+                    }}
+                  >
+                    <span>{p.planName}</span>
+                    <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '4px', background: timing?.badgeBg || 'rgba(0,0,0,0.3)', color: timing?.badgeColor || '#a1a1aa', fontWeight: 700 }}>
+                      {timing?.badge || 'VALID'}
+                    </span>
+                    {isCurrent && <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', boxShadow: '0 0 6px #10b981' }} />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* KEY BOX ROW: Handles both Purchased and Not Purchased states */}
           <div
             style={{
@@ -493,10 +658,10 @@ export default function Profile() {
               </div>
             </div>
 
-            {/* Right Action: BUY NOW button if NOT purchased, or COPY KEY button if purchased */}
+            {/* Right Action: BUY NOW button if NOT purchased, or Key Actions if purchased */}
             <div>
               {hasPurchased ? (
-                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
                   <motion.button
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
@@ -506,25 +671,47 @@ export default function Profile() {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '0.45rem',
-                      padding: '8px 16px',
+                      padding: '8px 14px',
                       borderRadius: '10px',
-                      fontSize: '0.86rem',
+                      fontSize: '0.84rem',
                       borderColor: copiedKey ? '#10b981' : 'rgba(0, 136, 255, 0.4)',
                       color: copiedKey ? '#10b981' : '#00f0ff'
                     }}
                   >
-                    {copiedKey ? <Check size={16} /> : <Copy size={16} />}
+                    {copiedKey ? <Check size={15} /> : <Copy size={15} />}
                     <span>{copiedKey ? 'Key Copied!' : 'Copy Key'}</span>
                   </motion.button>
 
                   <button
                     onClick={() => openCheckout(PRICING_PLANS[2])}
                     className="btn btn-outline"
-                    style={{ padding: '8px 14px', borderRadius: '10px', fontSize: '0.82rem', color: '#a1a1aa' }}
+                    style={{ padding: '8px 12px', borderRadius: '10px', fontSize: '0.82rem', color: '#a1a1aa' }}
                     title="Renew or Upgrade plan"
                   >
-                    Renew / Upgrade
+                    Renew / Buy
                   </button>
+
+                  {/* USER REQUIREMENT: Remove old key from user profile after buying new one */}
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setKeyToRemove(activeLicense.key)}
+                    className="btn btn-outline"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.4rem',
+                      padding: '8px 12px',
+                      borderRadius: '10px',
+                      fontSize: '0.82rem',
+                      borderColor: 'rgba(239, 68, 68, 0.35)',
+                      color: '#f87171'
+                    }}
+                    title="Remove this key from your profile"
+                  >
+                    <Trash2 size={14} />
+                    <span>Remove Key</span>
+                  </motion.button>
                 </div>
               ) : (
                 /* USER REQUIREMENT: "And if the user dont have purchased then there shows buy now button in front of key." */
@@ -559,13 +746,34 @@ export default function Profile() {
             </p>
           )}
 
-          {hasPurchased && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', marginTop: '1rem', paddingTop: '0.85rem', borderTop: '1px solid rgba(255, 255, 255, 0.05)', fontSize: '0.8rem', color: '#a1a1aa' }}>
-              <div>Hardware Binding: <strong style={{ color: activeLicense.hwid ? '#00f0ff' : '#10b981' }}>{activeLicense.hwid ? `Bound (${activeLicense.hwid.substring(0, 8)}...)` : 'Unbound (Auto-binds on 1st Launch)'}</strong></div>
-              <div>Duration: <strong style={{ color: '#fff' }}>{activeLicense.durationDays ? `${activeLicense.durationDays} Days` : 'Permanent Lifetime'}</strong></div>
-              <div>Countdown: <strong style={{ color: activeLicense.hwid ? '#10b981' : '#38bdf8' }}>{activeLicense.hwid ? 'Active (Reverse Countdown)' : 'Standby (Starts on 1st HWID login)'}</strong></div>
-            </div>
-          )}
+          {hasPurchased && (() => {
+            const timing = getLicenseTiming(activeLicense);
+            return (
+              <div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', marginTop: '1rem', paddingTop: '0.85rem', borderTop: '1px solid rgba(255, 255, 255, 0.05)', fontSize: '0.8rem', color: '#a1a1aa' }}>
+                  <div>Hardware Binding: <strong style={{ color: activeLicense.hwid ? '#00f0ff' : '#10b981' }}>{activeLicense.hwid ? `Bound (${activeLicense.hwid.substring(0, 8)}...)` : 'Unbound (Auto-binds on 1st Launch)'}</strong></div>
+                  <div>Duration: <strong style={{ color: '#fff' }}>{activeLicense.durationDays ? `${activeLicense.durationDays} Days` : 'Permanent Lifetime'}</strong></div>
+                  <div>Status: <strong style={{ color: timing?.badgeColor || '#10b981' }}>{timing?.statusText || (activeLicense.hwid ? 'Active (Reverse Countdown)' : 'Standby (Starts on 1st HWID login)')}</strong></div>
+                </div>
+
+                {timing?.isExpired && (
+                  <div style={{ marginTop: '0.85rem', padding: '0.75rem 1rem', background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: '0.82rem', color: '#fca5a5', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <AlertTriangle size={16} color="#ef4444" />
+                      <span>This license key has expired. You can remove it to clean up your profile or purchase a new plan.</span>
+                    </div>
+                    <button
+                      onClick={() => setKeyToRemove(activeLicense.key)}
+                      className="btn btn-outline"
+                      style={{ padding: '5px 12px', fontSize: '0.78rem', borderColor: '#ef4444', color: '#fca5a5' }}
+                    >
+                      Remove Expired Key
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </motion.div>
 
         {/* =========================================================================
@@ -1053,6 +1261,7 @@ export default function Profile() {
                     <th style={{ padding: '0.75rem 0.5rem' }}>Reference</th>
                     <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
                     <th style={{ padding: '0.75rem 0.5rem' }}>Key</th>
+                    <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1114,6 +1323,44 @@ export default function Profile() {
                           </button>
                         )}
                       </td>
+                      <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.45rem' }}>
+                          {ord.key && (
+                            <>
+                              {ord.key === activeLicense?.key ? (
+                                <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 800, padding: '2px 6px', background: 'rgba(16,185,129,0.15)', borderRadius: '4px' }}>
+                                  ★ ACTIVE
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => setActiveKeyId(ord.key)}
+                                  className="btn btn-outline"
+                                  style={{ padding: '2px 8px', fontSize: '0.72rem', borderRadius: '6px' }}
+                                  title="Select as active key"
+                                >
+                                  Set Active
+                                </button>
+                              )}
+                            </>
+                          )}
+                          <button
+                            onClick={() => setKeyToRemove(ord.key || ord.orderId)}
+                            style={{
+                              background: 'rgba(239, 68, 68, 0.12)',
+                              border: '1px solid rgba(239, 68, 68, 0.3)',
+                              color: '#f87171',
+                              borderRadius: '6px',
+                              padding: '4px 6px',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center'
+                            }}
+                            title="Remove key from profile"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1122,6 +1369,95 @@ export default function Profile() {
           )}
         </motion.div>
       </div>
+
+      {/* =========================================================================
+          KEY REMOVAL CONFIRMATION MODAL
+         ========================================================================= */}
+      <AnimatePresence>
+        {keyToRemove && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)', padding: '1rem' }}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="card"
+              style={{ maxWidth: '460px', width: '100%', padding: '1.75rem', background: '#090c14', border: '1px solid rgba(239, 68, 68, 0.35)', boxShadow: '0 20px 50px rgba(0,0,0,0.8)' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+                <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Trash2 size={20} color="#f87171" />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', margin: 0 }}>Remove License Key?</h3>
+                  <span style={{ fontSize: '0.8rem', color: '#a1a1aa' }}>Clean up old or expired keys from your profile</span>
+                </div>
+              </div>
+
+              <p style={{ fontSize: '0.86rem', color: '#d4d4d8', lineHeight: 1.5, marginBottom: '1.25rem' }}>
+                Are you sure you want to remove <code style={{ color: '#00f0ff', background: 'rgba(0,0,0,0.5)', padding: '2px 6px', borderRadius: '4px' }}>{keyToRemove}</code> from your profile? If you purchased a new key, this cleanly removes the old one from your active licenses.
+              </p>
+
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => setKeyToRemove(null)}
+                  disabled={isRemovingKey}
+                  className="btn btn-outline"
+                  style={{ padding: '8px 16px', fontSize: '0.86rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsRemovingKey(true);
+                    await removeKey(keyToRemove);
+                    setIsRemovingKey(false);
+                    setKeyToRemove(null);
+                    setActionNotice('License key was removed from your profile.');
+                    setTimeout(() => setActionNotice(null), 3500);
+                  }}
+                  disabled={isRemovingKey}
+                  className="btn btn-primary"
+                  style={{ padding: '8px 18px', fontSize: '0.86rem', background: '#ef4444', borderColor: '#ef4444' }}
+                >
+                  {isRemovingKey ? 'Removing...' : 'Yes, Remove Key'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* FLOATING ACTION NOTICE */}
+      <AnimatePresence>
+        {actionNotice && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            style={{
+              position: 'fixed',
+              top: '20px',
+              right: '20px',
+              zIndex: 350,
+              background: 'rgba(12, 16, 26, 0.95)',
+              border: '1px solid rgba(0, 136, 255, 0.4)',
+              boxShadow: '0 10px 30px rgba(0, 0, 0, 0.7), 0 0 20px rgba(0, 136, 255, 0.25)',
+              borderRadius: '12px',
+              padding: '0.75rem 1.15rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.65rem',
+              color: '#ffffff',
+              backdropFilter: 'blur(20px)'
+            }}
+          >
+            <CheckCircle2 size={16} color="#00f0ff" />
+            <span style={{ fontSize: '0.86rem', fontWeight: 500 }}>{actionNotice}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -105,8 +105,8 @@ export default async function handler(req, res) {
     const { license_key } = req.body || {};
     const cleanKey = (license_key || '').trim();
 
-    if (!/^LEGIT-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(cleanKey)) {
-      return res.status(400).json({ error: 'Invalid license key format.' });
+    if (!/^[A-Z0-9]{2,12}(-[A-Z0-9]{2,16})+$/i.test(cleanKey)) {
+      return res.status(400).json({ error: 'Invalid license key format. Expected e.g. LEGIT-XXXX-XXXX-XXXX' });
     }
 
     // Use Service Role Key to bypass RLS and read the licenses table

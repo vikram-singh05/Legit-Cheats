@@ -1,12 +1,13 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { PRICING_PLANS, getAppDownloadUrl, APP_FILE_NAME, APP_VERSION } from '../lib/plans';
 
 const PurchaseContext = createContext({});
 
-// Canonical cryptographic license format: LEGIT-XXXX-XXXX-XXXX
-export const LICENSE_KEY_REGEX = /^LEGIT-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+// Flexible cryptographic license format: accepts any valid hyphen-delimited alphanumeric format
+// e.g. LEGIT-XXXX-XXXX-XXXX, LEGIT-LIFETIME-2026, VIP-ABCD-1234
+export const LICENSE_KEY_REGEX = /^[A-Z0-9]{2,12}(-[A-Z0-9]{2,16})+$/i;
 
 export function isValidLicenseKey(key) {
   return typeof key === 'string' && LICENSE_KEY_REGEX.test(key.trim());
@@ -19,18 +20,33 @@ export function PurchaseProvider({ children }) {
   const [selectedPlan, setSelectedPlan] = useState(PRICING_PLANS[2]); // Default 30-Day Pro
   const [downloadNotice, setDownloadNotice] = useState(null);
 
+  // Active key selection tracking (allows user to switch between multiple keys)
+  const [activeKeyId, setActiveKeyIdState] = useState(() => {
+    try {
+      return localStorage.getItem('legit_selected_active_key') || null;
+    } catch (_) {
+      return null;
+    }
+  });
+
+  const setActiveKeyId = useCallback((keyString) => {
+    setActiveKeyIdState(keyString);
+    try {
+      if (keyString) localStorage.setItem('legit_selected_active_key', keyString);
+      else localStorage.removeItem('legit_selected_active_key');
+    } catch (_) {}
+  }, []);
+
   // Storage key helper: strictly bound to authenticated user ID
   const getStorageKey = (uid) => uid ? `legit_purchases_${uid}` : null;
 
   // Sanitize purchase records against tampering or forged keys
   const sanitizePurchases = useCallback((rawList) => {
-    if (!Array.isArray(rawList) || !user) return [];
+    if (!Array.isArray(rawList)) return [];
     return rawList.map(item => {
       if (!item || typeof item !== 'object') return null;
-      // If marked verified, strictly audit the license key format
       if (item.status === 'verified') {
         if (!isValidLicenseKey(item.key)) {
-          // Defense: Purge tampered or unauthorized key
           return {
             ...item,
             status: 'pending_verification',
@@ -40,11 +56,124 @@ export function PurchaseProvider({ children }) {
       }
       return item;
     }).filter(Boolean);
-  }, [user]);
+  }, []);
+
+  // Persist purchases to localStorage
+  const savePurchases = useCallback((updatedPurchases) => {
+    if (!user?.id) return;
+    const sanitized = sanitizePurchases(updatedPurchases);
+    setPurchases(sanitized);
+
+    const key = getStorageKey(user.id);
+    if (key) {
+      try {
+        localStorage.setItem(key, JSON.stringify(sanitized));
+      } catch (err) {
+        console.warn('Failed to save purchases to localStorage:', err);
+      }
+    }
+  }, [user, sanitizePurchases]);
+
+  // Synchronize purchases directly with Supabase server licenses
+  const syncWithServer = useCallback(async () => {
+    if (!user?.id) return;
+
+    try {
+      let token = session?.access_token;
+      if (!token) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        token = sessionData?.session?.access_token;
+      }
+      if (!token) return;
+
+      const res = await fetch('/api/user-licenses', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!res.ok) return;
+
+      const result = await res.json();
+      if (!result.success || !Array.isArray(result.licenses)) return;
+
+      // Map Supabase licenses to purchases
+      const serverPurchases = result.licenses.map(lic => {
+        let matchedPlan = PRICING_PLANS.find(p => p.isLifetime === lic.is_lifetime && p.durationDays === lic.duration_days);
+        if (!matchedPlan) {
+          if (lic.is_lifetime) matchedPlan = PRICING_PLANS[3];
+          else if (lic.duration_days === 1) matchedPlan = PRICING_PLANS[0];
+          else if (lic.duration_days === 7) matchedPlan = PRICING_PLANS[1];
+          else matchedPlan = PRICING_PLANS[2];
+        }
+
+        return {
+          orderId: 'LIC-' + lic.license_key.replace(/[^A-Z0-9]/gi, '').substring(0, 10),
+          planId: matchedPlan.id,
+          planName: matchedPlan.name,
+          price: matchedPlan.price,
+          amount: matchedPlan.amount,
+          durationDays: lic.duration_days,
+          isLifetime: lic.is_lifetime,
+          paymentMethod: 'verified_license',
+          transactionRef: lic.license_key,
+          status: 'verified',
+          createdAt: lic.created_at || new Date().toISOString(),
+          userEmail: user.email,
+          userId: user.id,
+          key: lic.license_key,
+          hwid: lic.hwid || null,
+          activatedAt: lic.activated_at || null,
+          expiresAt: lic.expires_at || null,
+          dbStatus: lic.status
+        };
+      });
+
+      // Merge with local storage
+      const userStorageKey = getStorageKey(user.id);
+      let localList = [];
+      if (userStorageKey) {
+        try {
+          const stored = localStorage.getItem(userStorageKey);
+          if (stored) localList = JSON.parse(stored) || [];
+        } catch (_) {}
+      }
+
+      const mergedMap = new Map();
+      serverPurchases.forEach(sp => {
+        if (sp.key) mergedMap.set(sp.key, sp);
+      });
+
+      localList.forEach(lp => {
+        if (lp.key && mergedMap.has(lp.key)) {
+          const srv = mergedMap.get(lp.key);
+          mergedMap.set(lp.key, { ...lp, ...srv });
+        } else if (lp.orderId && !lp.key) {
+          mergedMap.set(lp.orderId, lp);
+        } else if (lp.key) {
+          mergedMap.set(lp.key, lp);
+        }
+      });
+
+      const mergedList = Array.from(mergedMap.values()).sort((a, b) => {
+        const timeA = new Date(a.createdAt || 0).getTime();
+        const timeB = new Date(b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
+
+      setPurchases(mergedList);
+      if (userStorageKey) {
+        try {
+          localStorage.setItem(userStorageKey, JSON.stringify(mergedList));
+        } catch (_) {}
+      }
+    } catch (syncErr) {
+      console.warn('License server sync notice:', syncErr);
+    }
+  }, [user, session]);
 
   // Load user purchases and synchronize across persistent sessions
   const loadPurchases = useCallback(() => {
-    // Defense: Guest or unauthenticated visitors have zero purchase privileges
     if (!user?.id) {
       setPurchases([]);
       try { localStorage.removeItem('legit_purchases_guest'); } catch (_) {}
@@ -80,33 +209,50 @@ export function PurchaseProvider({ children }) {
     }
 
     setPurchases(loaded);
-  }, [user, sanitizePurchases]);
+    // Background sync with Supabase server
+    syncWithServer();
+  }, [user, sanitizePurchases, syncWithServer]);
 
   useEffect(() => {
     loadPurchases();
   }, [loadPurchases]);
 
-  // Persist purchases to localStorage only (SECURITY FIX MED-05: removed user_metadata sync)
-  // Purchases are stored server-side in the licenses table via /api/verify-payment
-  const savePurchases = async (updatedPurchases) => {
-    if (!user?.id) return;
-    const sanitized = sanitizePurchases(updatedPurchases);
-    setPurchases(sanitized);
+  // Derive verified purchases
+  const verifiedPurchases = useMemo(() => {
+    return purchases.filter(p => p.status === 'verified' && isValidLicenseKey(p.key));
+  }, [purchases]);
 
-    const key = getStorageKey(user.id);
-    if (key) {
-      localStorage.setItem(key, JSON.stringify(sanitized));
+  // Derive active verified license with smart priority selection
+  const activeLicense = useMemo(() => {
+    if (verifiedPurchases.length === 0) return null;
+
+    // 1. If user explicitly selected an active key and it's valid
+    if (activeKeyId) {
+      const selected = verifiedPurchases.find(p => p.key === activeKeyId || p.orderId === activeKeyId);
+      if (selected) return selected;
     }
-    // --- SECURITY FIX (MED-05): Removed user_metadata.purchases sync ---
-    // Storing all purchases in auth metadata causes unlimited growth
-    // and potential token corruption. Licenses are persisted server-side.
-  };
 
-  // Derive active verified license with cryptographic validation
-  const verifiedPurchases = purchases.filter(p => p.status === 'verified' && isValidLicenseKey(p.key));
-  const activeLicense = verifiedPurchases.length > 0
-    ? verifiedPurchases[verifiedPurchases.length - 1]
-    : null;
+    // 2. Prioritize Lifetime keys
+    const lifetime = verifiedPurchases.find(p => p.isLifetime);
+    if (lifetime) return lifetime;
+
+    // 3. Prioritize non-expired keys (either countdown running with time left or standby not yet bound)
+    const validKey = verifiedPurchases.find(p => {
+      if (p.isLifetime) return true;
+      if (!p.hwid) return true; // Standby
+      if (p.expiresAt && new Date(p.expiresAt).getTime() > Date.now()) return true;
+      if (p.activatedAt && p.durationDays) {
+        const exp = new Date(p.activatedAt).getTime() + Number(p.durationDays) * 24 * 60 * 60 * 1000;
+        return exp > Date.now();
+      }
+      return false;
+    });
+
+    if (validKey) return validKey;
+
+    // 4. Default to newest verified purchase
+    return verifiedPurchases[0];
+  }, [verifiedPurchases, activeKeyId]);
 
   const hasPurchased = !!activeLicense && !!user;
 
@@ -120,6 +266,58 @@ export function PurchaseProvider({ children }) {
 
   const closeCheckout = () => {
     setIsCheckoutOpen(false);
+  };
+
+  // Remove / Unlink key from user profile (USER FEATURE: remove old key after buying new one)
+  const removeKey = async (keyOrOrderId) => {
+    if (!user?.id || !keyOrOrderId) return { success: false };
+
+    const target = (typeof keyOrOrderId === 'string' ? keyOrOrderId : '').trim();
+    const purchaseToRemove = purchases.find(p => p.key === target || p.orderId === target);
+    const keyString = purchaseToRemove?.key || target;
+
+    // Remove from local state immediately
+    const updated = purchases.filter(p => p.key !== target && p.orderId !== target);
+    setPurchases(updated);
+
+    const userStorageKey = getStorageKey(user.id);
+    if (userStorageKey) {
+      try {
+        localStorage.setItem(userStorageKey, JSON.stringify(updated));
+      } catch (_) {}
+    }
+
+    // If removed key was selected active key, clear selection
+    if (activeKeyId === target || activeKeyId === keyString) {
+      setActiveKeyId(null);
+    }
+
+    // Call server API to unlink license in Supabase
+    try {
+      let token = session?.access_token;
+      if (!token) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        token = sessionData?.session?.access_token;
+      }
+
+      if (token && isValidLicenseKey(keyString)) {
+        await fetch('/api/user-licenses', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            action: 'remove',
+            license_key: keyString
+          })
+        });
+      }
+    } catch (unlinkErr) {
+      console.warn('Server unlink notice:', unlinkErr);
+    }
+
+    return { success: true };
   };
 
   // Create an order in pending state (Requires Authentication)
@@ -148,7 +346,7 @@ export function PurchaseProvider({ children }) {
     };
 
     const updated = [newOrder, ...purchases];
-    await savePurchases(updated);
+    savePurchases(updated);
     return newOrder;
   };
 
@@ -156,7 +354,6 @@ export function PurchaseProvider({ children }) {
    * Verify a purchase:
    * 1. Requires valid user session
    * 2. Calls server-side /api/verify-payment with user's JWT access token
-   * 3. Prevents client-side arbitrary string minting or direct DB scraping (CRIT-02)
    */
   const verifyPurchase = async (orderIdOrRef, customPlan = null) => {
     if (!user) {
@@ -219,7 +416,8 @@ export function PurchaseProvider({ children }) {
         updatedList = [verifiedOrder, ...purchases];
       }
 
-      await savePurchases(updatedList);
+      savePurchases(updatedList);
+      setActiveKeyId(verifiedOrder.key);
       return verifiedOrder;
     }
 
@@ -231,6 +429,7 @@ export function PurchaseProvider({ children }) {
     );
 
     if (existingOrder && existingOrder.status === 'verified' && isValidLicenseKey(existingOrder.key)) {
+      setActiveKeyId(existingOrder.key);
       return existingOrder;
     }
 
@@ -249,11 +448,12 @@ export function PurchaseProvider({ children }) {
 
     const cleanKey = (licenseKey || '').trim();
     if (!isValidLicenseKey(cleanKey)) {
-      throw new Error('Invalid license key format. Expected format: LEGIT-XXXX-XXXX-XXXX');
+      throw new Error('Invalid license key format. Expected e.g. LEGIT-XXXX-XXXX-XXXX');
     }
 
     const existingOrder = purchases.find(p => p.key === cleanKey);
     if (existingOrder && existingOrder.status === 'verified') {
+      setActiveKeyId(cleanKey);
       return existingOrder;
     }
 
@@ -282,7 +482,10 @@ export function PurchaseProvider({ children }) {
       // Infer plan from dbLicense
       let matchedPlan = PRICING_PLANS.find(p => p.isLifetime === dbLicense.is_lifetime && p.durationDays === dbLicense.duration_days);
       if (!matchedPlan) {
-        matchedPlan = PRICING_PLANS[2]; // fallback
+        if (dbLicense.is_lifetime) matchedPlan = PRICING_PLANS[3];
+        else if (dbLicense.duration_days === 1) matchedPlan = PRICING_PLANS[0];
+        else if (dbLicense.duration_days === 7) matchedPlan = PRICING_PLANS[1];
+        else matchedPlan = PRICING_PLANS[2];
       }
 
       const verifiedOrder = {
@@ -306,7 +509,8 @@ export function PurchaseProvider({ children }) {
       };
 
       const updatedList = [verifiedOrder, ...purchases];
-      await savePurchases(updatedList);
+      savePurchases(updatedList);
+      setActiveKeyId(cleanKey);
       return verifiedOrder;
 
     } catch (checkErr) {
@@ -359,7 +563,11 @@ export function PurchaseProvider({ children }) {
     <PurchaseContext.Provider
       value={{
         purchases,
+        verifiedPurchases,
         activeLicense,
+        activeKeyId,
+        setActiveKeyId,
+        removeKey,
         hasPurchased,
         isCheckoutOpen,
         selectedPlan,
@@ -372,6 +580,7 @@ export function PurchaseProvider({ children }) {
         downloadApp,
         triggerDummyDownload: downloadApp,
         refreshPurchases: loadPurchases,
+        syncWithServer,
         APP_VERSION,
         APP_FILE_NAME,
         appDownloadUrl: getAppDownloadUrl(),

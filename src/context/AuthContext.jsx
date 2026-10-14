@@ -7,7 +7,13 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(() => {
+    try {
+      return localStorage.getItem('legit_admin_cached') === 'true';
+    } catch (_) {
+      return false;
+    }
+  });
   const [loading, setLoading] = useState(true);
 
   // Authenticate and fetch user profile with strict role validation
@@ -18,6 +24,7 @@ export function AuthProvider({ children }) {
       setSession(null);
       setProfile(null);
       setIsAdmin(false);
+      try { localStorage.removeItem('legit_admin_cached'); } catch (_) {}
       setLoading(false);
       return;
     }
@@ -34,6 +41,12 @@ export function AuthProvider({ children }) {
 
     const isDesignatedAdmin = Boolean(userEmail && adminEmails.includes(userEmail));
 
+    // Immediately grant admin status to designated admin accounts so the navbar & portal never flicker
+    if (isDesignatedAdmin) {
+      setIsAdmin(true);
+      try { localStorage.setItem('legit_admin_cached', 'true'); } catch (_) {}
+    }
+
     try {
       // Query profiles table directly from authenticated Supabase session
       let { data, error } = await supabase
@@ -42,32 +55,34 @@ export function AuthProvider({ children }) {
         .eq('id', currentUser.id)
         .maybeSingle();
 
-      // If user is a designated admin email, ensure database role is 'admin' via RPC
+      // If user is a designated admin email, ensure database role is 'admin' via RPC in background
       if (isDesignatedAdmin && (!data || data.role !== 'admin')) {
-        try {
-          await supabase.rpc('make_user_admin', { target_email: userEmail });
-          const { data: refreshedProfile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', currentUser.id)
-            .maybeSingle();
-          if (refreshedProfile) {
-            data = refreshedProfile;
-          }
-        } catch (syncErr) {
-          console.warn('Admin self-healing sync warning:', syncErr);
-        }
+        supabase.rpc('make_user_admin', { target_email: userEmail })
+          .then(() => {
+            supabase.from('profiles').select('*').eq('id', currentUser.id).maybeSingle()
+              .then(({ data: updated }) => { if (updated) setProfile(updated); });
+          })
+          .catch((syncErr) => console.warn('Admin self-healing sync warning:', syncErr));
       }
 
       if (!error && data) {
         const adminStatus = data.role === 'admin' || isDesignatedAdmin;
         setProfile({ ...data, role: adminStatus ? 'admin' : data.role });
         setIsAdmin(adminStatus);
+        try {
+          if (adminStatus) localStorage.setItem('legit_admin_cached', 'true');
+          else localStorage.removeItem('legit_admin_cached');
+        } catch (_) {}
       } else {
         // Fallback to app_metadata or designated admin check
         const serverRole = isDesignatedAdmin ? 'admin' : (currentUser.app_metadata?.role || 'user');
         setProfile({ id: currentUser.id, email: currentUser.email, role: serverRole });
-        setIsAdmin(serverRole === 'admin' || isDesignatedAdmin);
+        const adminStatus = serverRole === 'admin' || isDesignatedAdmin;
+        setIsAdmin(adminStatus);
+        try {
+          if (adminStatus) localStorage.setItem('legit_admin_cached', 'true');
+          else localStorage.removeItem('legit_admin_cached');
+        } catch (_) {}
       }
     } catch (err) {
       console.error('Security alert: Failed to verify profile role:', err);
@@ -174,8 +189,11 @@ export function AuthProvider({ children }) {
   };
 
   const signOut = async () => {
-    // --- SECURITY FIX (CRIT-03): Clean up any legacy service role keys ---
-    try { localStorage.removeItem('vanguard_admin_key'); } catch (_) {}
+    // --- SECURITY FIX (CRIT-03): Clean up any legacy service role keys & cached credentials ---
+    try {
+      localStorage.removeItem('vanguard_admin_key');
+      localStorage.removeItem('legit_admin_cached');
+    } catch (_) {}
     await supabase.auth.signOut();
     setSession(null);
     setUser(null);
