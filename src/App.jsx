@@ -180,34 +180,7 @@ function MainNavbar() {
             <a href="/#faq" className="nav-link">
               FAQ
             </a>
-            {user && (
-              <Link
-                to="/profile"
-                className="nav-link"
-                style={{
-                  color: location.pathname === '/profile' ? '#00f0ff' : 'inherit',
-                  fontWeight: location.pathname === '/profile' ? 700 : 500
-                }}
-              >
-                My Profile
-              </Link>
-            )}
-            {isAdmin && (
-              <Link
-                to="/dashboard"
-                className="nav-link"
-                style={{
-                  color: location.pathname.startsWith('/dashboard') ? '#00f0ff' : '#38bdf8',
-                  fontWeight: 700,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.35rem'
-                }}
-              >
-                <Terminal size={14} color="#00f0ff" />
-                <span>Admin Portal</span>
-              </Link>
-            )}
+
           </div>
 
           {/* Right Action Items */}
