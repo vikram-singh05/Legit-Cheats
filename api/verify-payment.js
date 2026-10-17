@@ -115,8 +115,8 @@ export default async function handler(req, res) {
     const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
 
     // Fail-fast if critical credentials are missing
-    if (!supabaseUrl || !supabaseAnonKey) {
-      console.error('FATAL: Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY env vars');
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
+      console.error('FATAL: Missing Supabase credentials in verify-payment');
       return res.status(500).json({ error: 'Server configuration error. Contact support.' });
     }
     if (!razorpayKeyId || !razorpayKeySecret) {
@@ -257,13 +257,12 @@ export default async function handler(req, res) {
     // 8. Persistent Anti-Replay: Check if already redeemed
     // CRITICAL SECURITY (CRIT-01): Only check existing license AFTER signature and API verification succeed.
     // Furthermore, strictly verify ownership: verifiedUserId must match the original purchaser.
-    const dbAuthToken = supabaseServiceKey || supabaseAnonKey;
     try {
       const checkRes = await fetch(
         `${supabaseUrl}/rest/v1/licenses?note=like.*${encodeURIComponent(cleanPaymentId)}*&select=license_key,status,note,hwid,activated_at,expires_at`, {
         headers: {
           'apikey': supabaseAnonKey,
-          'Authorization': `Bearer ${dbAuthToken}`
+          'Authorization': `Bearer ${supabaseServiceKey}`
         }
       });
       if (checkRes.ok) {
@@ -334,7 +333,7 @@ export default async function handler(req, res) {
         method: 'POST',
         headers: {
           'apikey': supabaseAnonKey,
-          'Authorization': `Bearer ${supabaseServiceKey || supabaseAnonKey}`,
+          'Authorization': `Bearer ${supabaseServiceKey}`,
           'Content-Type': 'application/json',
           'Prefer': 'return=minimal'
         },

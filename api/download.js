@@ -72,7 +72,8 @@ export default async function handler(req, res) {
     const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    if (!supabaseUrl || !supabaseAnonKey) {
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
+      console.error('FATAL: Missing Supabase credentials in download gateway');
       return res.status(500).json({ error: 'Server configuration error.' });
     }
 
@@ -120,12 +121,15 @@ export default async function handler(req, res) {
     let hasActiveLicense = isAdmin;
 
     // 3. Verify user has an active, valid license
-    if (!hasActiveLicense && supabaseServiceKey) {
-      const dbAuthToken = supabaseServiceKey;
-      const fetchRes = await fetch(`${supabaseUrl}/rest/v1/licenses?status=eq.active&select=*`, {
+    if (!hasActiveLicense) {
+      const orFilter = userEmail
+        ? `or=(note.ilike.*${encodeURIComponent(userEmail)}*,note.ilike.*${encodeURIComponent(userId)}*)`
+        : `note.ilike.*${encodeURIComponent(userId)}*`;
+
+      const fetchRes = await fetch(`${supabaseUrl}/rest/v1/licenses?${orFilter}&status=eq.active&select=*`, {
         headers: {
           'apikey': supabaseAnonKey,
-          'Authorization': `Bearer ${dbAuthToken}`
+          'Authorization': `Bearer ${supabaseServiceKey}`
         }
       });
 

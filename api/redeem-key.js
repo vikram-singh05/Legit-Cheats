@@ -74,7 +74,8 @@ export default async function handler(req, res) {
     const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    if (!supabaseUrl || !supabaseAnonKey) {
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
+      console.error('FATAL: Missing Supabase credentials in redeem-key');
       return res.status(500).json({ error: 'Server configuration error.' });
     }
 
@@ -110,13 +111,11 @@ export default async function handler(req, res) {
     }
 
     // Use Service Role Key to bypass RLS and read the licenses table
-    const dbAuthToken = supabaseServiceKey || supabaseAnonKey;
-    
     const checkRes = await fetch(
       `${supabaseUrl}/rest/v1/licenses?license_key=eq.${encodeURIComponent(cleanKey)}&status=eq.active&select=*`, {
       headers: {
         'apikey': supabaseAnonKey,
-        'Authorization': `Bearer ${dbAuthToken}`
+        'Authorization': `Bearer ${supabaseServiceKey}`
       }
     });
 
