@@ -3,7 +3,11 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import { AuthProvider } from './context/AuthContext.jsx'
+import { initAntiTamper } from './lib/antiTamper.js'
 import './index.css'
+
+// Initialize anti-reverse-engineering & anti-tamper shield
+initAntiTamper();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

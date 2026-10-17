@@ -7,24 +7,23 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(() => {
-    try {
-      return localStorage.getItem('legit_admin_cached') === 'true';
-    } catch (_) {
-      return false;
-    }
-  });
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Authenticate and fetch user profile with strict role validation
   // --- SECURITY: Only trust roles from profiles table, app_metadata (server-writable), or designated admin config ---
   const fetchProfileAndRole = useCallback(async (currentUser) => {
+    // Purge any legacy untrusted tokens from localStorage
+    try {
+      localStorage.removeItem('legit_admin_cached');
+      localStorage.removeItem('vanguard_admin_key');
+    } catch (_) {}
+
     if (!currentUser) {
       setUser(null);
       setSession(null);
       setProfile(null);
       setIsAdmin(false);
-      try { localStorage.removeItem('legit_admin_cached'); } catch (_) {}
       setLoading(false);
       return;
     }
@@ -40,12 +39,6 @@ export function AuthProvider({ children }) {
     ].filter(Boolean);
 
     const isDesignatedAdmin = Boolean(userEmail && adminEmails.includes(userEmail));
-
-    // Immediately grant admin status to designated admin accounts so the navbar & portal never flicker
-    if (isDesignatedAdmin) {
-      setIsAdmin(true);
-      try { localStorage.setItem('legit_admin_cached', 'true'); } catch (_) {}
-    }
 
     try {
       // Query profiles table directly from authenticated Supabase session
@@ -69,20 +62,11 @@ export function AuthProvider({ children }) {
         const adminStatus = data.role === 'admin' || isDesignatedAdmin;
         setProfile({ ...data, role: adminStatus ? 'admin' : data.role });
         setIsAdmin(adminStatus);
-        try {
-          if (adminStatus) localStorage.setItem('legit_admin_cached', 'true');
-          else localStorage.removeItem('legit_admin_cached');
-        } catch (_) {}
       } else {
         // Fallback to app_metadata or designated admin check
         const serverRole = isDesignatedAdmin ? 'admin' : (currentUser.app_metadata?.role || 'user');
         setProfile({ id: currentUser.id, email: currentUser.email, role: serverRole });
-        const adminStatus = serverRole === 'admin' || isDesignatedAdmin;
-        setIsAdmin(adminStatus);
-        try {
-          if (adminStatus) localStorage.setItem('legit_admin_cached', 'true');
-          else localStorage.removeItem('legit_admin_cached');
-        } catch (_) {}
+        setIsAdmin(serverRole === 'admin' || isDesignatedAdmin);
       }
     } catch (err) {
       console.error('Security alert: Failed to verify profile role:', err);

@@ -4,11 +4,54 @@ import handler from './api/verify-payment.js'
 import createOrderHandler from './api/create-order.js'
 import redeemKeyHandler from './api/redeem-key.js'
 import adminUsersHandler from './api/admin-users.js'
+import adminLicensesHandler from './api/admin-licenses.js'
+import downloadHandler from './api/download.js'
+import userLicensesHandler from './api/user-licenses.js'
+
+// Helper to wrap express-like req/res for Vercel serverless handlers
+function createMockRes(res) {
+  return {
+    setHeader: (k, v) => res.setHeader(k, v),
+    status: (code) => {
+      res.statusCode = code;
+      return {
+        json: (data) => {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(data));
+        },
+        send: (data) => {
+          res.end(data);
+        },
+        end: () => {
+          res.end();
+        }
+      };
+    },
+  };
+}
+
+async function parseBody(req) {
+  return new Promise((resolve) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(body || '{}'));
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   process.env = { ...process.env, ...env }
+
+  const isProd = mode === 'production';
 
   return {
     server: {
@@ -30,102 +73,33 @@ export default defineConfig(({ mode }) => {
         configureServer(server) {
           server.middlewares.use('/api', async (req, res) => {
             const path = req.originalUrl || req.url;
-            if (path.startsWith('/api/verify-payment') && req.method === 'POST') {
-              let body = ''
-              req.on('data', (chunk) => {
-                body += chunk
-              })
-              req.on('end', async () => {
-                try {
-                  req.body = JSON.parse(body || '{}')
-                } catch {
-                  req.body = {}
-                }
-                const mockRes = {
-                  setHeader: (k, v) => res.setHeader(k, v),
-                  status: (code) => {
-                    res.statusCode = code
-                    return {
-                      json: (data) => {
-                        res.setHeader('Content-Type', 'application/json')
-                        res.end(JSON.stringify(data))
-                      },
-                    }
-                  },
-                }
-                await handler(req, mockRes)
-              })
-            } else if (path.startsWith('/api/create-order') && req.method === 'POST') {
-              let body = ''
-              req.on('data', (chunk) => {
-                body += chunk
-              })
-              req.on('end', async () => {
-                try {
-                  req.body = JSON.parse(body || '{}')
-                } catch {
-                  req.body = {}
-                }
-                const mockRes = {
-                  setHeader: (k, v) => res.setHeader(k, v),
-                  status: (code) => {
-                    res.statusCode = code
-                    return {
-                      json: (data) => {
-                        res.setHeader('Content-Type', 'application/json')
-                        res.end(JSON.stringify(data))
-                      },
-                    }
-                  },
-                }
-                await createOrderHandler(req, mockRes)
-              })
-            } else if (path.startsWith('/api/redeem-key') && req.method === 'POST') {
-              let body = ''
-              req.on('data', (chunk) => {
-                body += chunk
-              })
-              req.on('end', async () => {
-                try {
-                  req.body = JSON.parse(body || '{}')
-                } catch {
-                  req.body = {}
-                }
-                const mockRes = {
-                  setHeader: (k, v) => res.setHeader(k, v),
-                  status: (code) => {
-                    res.statusCode = code
-                    return {
-                      json: (data) => {
-                        res.setHeader('Content-Type', 'application/json')
-                        res.end(JSON.stringify(data))
-                      },
-                    }
-                  },
-                }
-                await redeemKeyHandler(req, mockRes)
-              })
-            } else if (path.startsWith('/api/admin-users') && req.method === 'GET') {
-              const mockRes = {
-                setHeader: (k, v) => res.setHeader(k, v),
-                status: (code) => {
-                  res.statusCode = code
-                  return {
-                    json: (data) => {
-                      res.setHeader('Content-Type', 'application/json')
-                      res.end(JSON.stringify(data))
-                    },
-                  }
-                },
-              }
-              await adminUsersHandler(req, mockRes)
-            } else {
-              res.statusCode = 405
-              res.end('Method Not Allowed')
+            const mockRes = createMockRes(res);
+
+            if (req.method === 'POST' || req.method === 'PATCH' || req.method === 'DELETE') {
+              req.body = await parseBody(req);
             }
-          })
+
+            if (path.startsWith('/api/verify-payment')) {
+              await handler(req, mockRes);
+            } else if (path.startsWith('/api/create-order')) {
+              await createOrderHandler(req, mockRes);
+            } else if (path.startsWith('/api/redeem-key')) {
+              await redeemKeyHandler(req, mockRes);
+            } else if (path.startsWith('/api/admin-users')) {
+              await adminUsersHandler(req, mockRes);
+            } else if (path.startsWith('/api/admin-licenses')) {
+              await adminLicensesHandler(req, mockRes);
+            } else if (path.startsWith('/api/user-licenses')) {
+              await userLicensesHandler(req, mockRes);
+            } else if (path.startsWith('/api/download')) {
+              await downloadHandler(req, mockRes);
+            } else {
+              res.statusCode = 405;
+              res.end('Method Not Allowed');
+            }
+          });
         },
       },
     ],
-  }
-})
+  };
+});

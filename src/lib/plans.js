@@ -83,20 +83,14 @@ export const APP_VERSION = 'v3.4.2';
 export const APP_FILE_NAME = 'legit.exe';
 
 /**
- * Returns the real Supabase Storage public bucket URL for the application client
+ * Securely routes client download through authenticated server gateway /api/download
  */
 export function getAppDownloadUrl() {
-  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_APP_DOWNLOAD_URL) {
-    return import.meta.env.VITE_APP_DOWNLOAD_URL;
-  }
-  // --- SECURITY FIX (MED-01): No hardcoded URL fallback ---
-  const supabaseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) || '';
-  if (!supabaseUrl) return `/downloads/${APP_FILE_NAME}`;
-  return `${supabaseUrl}/storage/v1/object/public/downloads/${APP_FILE_NAME}`;
+  return '/api/download';
 }
 
-export const APP_DOWNLOAD_URL = getAppDownloadUrl();
-export const DUMMY_DOWNLOAD_URL = APP_DOWNLOAD_URL;
+export const APP_DOWNLOAD_URL = '/api/download';
+export const DUMMY_DOWNLOAD_URL = '/api/download';
 
 export const DEFAULT_UPI_ID = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_UPI_ID) || 'legitcheats@axl';
 

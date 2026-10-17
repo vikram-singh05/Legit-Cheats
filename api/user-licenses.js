@@ -60,19 +60,27 @@ export default async function handler(req, res) {
 
     const userEmail = (authUser.email || '').trim().toLowerCase();
     const userId = authUser.id;
-    const dbAuthToken = supabaseServiceKey || supabaseAnonKey;
 
-    // 2. GET: Retrieve user's licenses from database
+    if (!supabaseServiceKey) {
+      console.error('FATAL: Missing SUPABASE_SERVICE_ROLE_KEY in user-licenses');
+      return res.status(500).json({ error: 'Server configuration error.' });
+    }
+
+    // 2. GET: Retrieve user's licenses directly filtered by email or user ID
     if (req.method === 'GET') {
-      const fetchRes = await fetch(`${supabaseUrl}/rest/v1/licenses?select=*&order=created_at.desc`, {
+      const orFilter = userEmail
+        ? `or=(note.ilike.*${encodeURIComponent(userEmail)}*,note.ilike.*${encodeURIComponent(userId)}*)`
+        : `note.ilike.*${encodeURIComponent(userId)}*`;
+
+      const fetchRes = await fetch(`${supabaseUrl}/rest/v1/licenses?${orFilter}&select=*&order=created_at.desc`, {
         headers: {
           'apikey': supabaseAnonKey,
-          'Authorization': `Bearer ${dbAuthToken}`
+          'Authorization': `Bearer ${supabaseServiceKey}`
         }
       });
 
       if (!fetchRes.ok) {
-        console.error('Failed to query licenses from database:', await fetchRes.text());
+        console.error('Failed to query user licenses from database:', await fetchRes.text());
         return res.status(500).json({ error: 'License database service unavailable.' });
       }
 
@@ -81,7 +89,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, licenses: [] });
       }
 
-      // Filter licenses bound to this user that have NOT been unlinked
+      // Filter out any unlinked licenses
       const userLicenses = allLicenses.filter(lic => {
         if (!lic || !lic.license_key) return false;
         const note = (lic.note || '').toLowerCase();
@@ -118,7 +126,7 @@ export default async function handler(req, res) {
         {
           headers: {
             'apikey': supabaseAnonKey,
-            'Authorization': `Bearer ${dbAuthToken}`
+            'Authorization': `Bearer ${supabaseServiceKey}`
           }
         }
       );

@@ -519,44 +519,69 @@ export function PurchaseProvider({ children }) {
   };
 
   // Real App Client Download handler (strictly protected by verified license & auth check)
-  const downloadApp = () => {
+  const downloadApp = async () => {
     if (!user || !hasPurchased) {
       openCheckout();
       return;
     }
 
-    const realUrl = getAppDownloadUrl();
-    const fallbackUrl = `/downloads/${APP_FILE_NAME}`;
-
-    setDownloadNotice({
-      fileName: APP_FILE_NAME,
-      version: APP_VERSION,
-      url: realUrl,
-      timestamp: new Date().toLocaleTimeString()
-    });
-
     try {
-      const link = document.createElement('a');
-      link.href = realUrl;
-      link.download = APP_FILE_NAME;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      console.warn('Direct link navigation failed, attempting fallback download:', err);
-      const link = document.createElement('a');
-      link.href = fallbackUrl;
-      link.download = APP_FILE_NAME;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
+      let token = session?.access_token;
+      if (!token) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        token = sessionData?.session?.access_token;
+      }
 
-    setTimeout(() => {
-      setDownloadNotice(null);
-    }, 4500);
+      setDownloadNotice({
+        fileName: APP_FILE_NAME,
+        version: APP_VERSION,
+        url: 'Verifying license credentials with security gateway...',
+        timestamp: new Date().toLocaleTimeString()
+      });
+
+      const res = await fetch('/api/download', {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Failed to download client. Active license required.');
+        setDownloadNotice(null);
+        return;
+      }
+
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.download_url) {
+          const link = document.createElement('a');
+          link.href = data.download_url;
+          link.download = APP_FILE_NAME;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+      } else {
+        const blob = await res.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = APP_FILE_NAME;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 10000);
+      }
+    } catch (err) {
+      console.error('Download error:', err);
+      alert('Download gateway error. Please try again.');
+    } finally {
+      setTimeout(() => {
+        setDownloadNotice(null);
+      }, 4500);
+    }
   };
 
   return (

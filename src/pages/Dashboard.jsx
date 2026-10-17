@@ -37,34 +37,43 @@ export default function Dashboard() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
+  const getAuthToken = async () => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    return sessionData?.session?.access_token || null;
+  };
+
   const fetchLicenses = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('licenses')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const token = await getAuthToken();
+      if (!token) {
+        showToast('Authentication required.');
+        setLoading(false);
+        return;
+      }
 
-      if (error) {
-        console.error('Error fetching licenses:', error);
-        showToast('Error querying licenses: ' + error.message);
+      const res = await fetch('/api/admin-licenses', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        console.error('Error fetching licenses:', err);
+        showToast('Error querying licenses: ' + (err.error || 'Server error'));
       } else {
-        setLicenses(data || []);
+        const data = await res.json();
+        setLicenses(data.licenses || []);
       }
 
       // Fetch user directory to resolve UUIDs to user Gmails
       try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData?.session?.access_token;
-        if (token) {
-          const userRes = await fetch('/api/admin-users', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (userRes.ok) {
-            const userData = await userRes.json();
-            if (userData.users) {
-              setUserMap(userData.users);
-            }
+        const userRes = await fetch('/api/admin-users', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (userRes.ok) {
+          const userData = await userRes.json();
+          if (userData.users) {
+            setUserMap(userData.users);
           }
         }
       } catch (userDirErr) {
@@ -72,6 +81,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error(err);
+      showToast('Error connecting to admin security API');
     } finally {
       setLoading(false);
     }
@@ -120,21 +130,31 @@ export default function Dashboard() {
     setAdminNote('');
     
     try {
-      const { data, error } = await supabase
-        .from('licenses')
-        .insert([{
+      const token = await getAuthToken();
+      if (!token) throw new Error('Authentication required.');
+
+      const res = await fetch('/api/admin-licenses', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
           license_key: generatedKey,
           duration_days: isLifetime ? null : Number(newKeyDuration),
           is_lifetime: isLifetime,
           note: newLicense.note,
           status: 'active'
-        }])
-        .select();
+        })
+      });
 
-      if (error) throw error;
-      
-      // Update temp id with real id from DB
-      setLicenses(prev => prev.map(l => l.id === tempId ? data[0] : l));
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to mint license');
+      }
+
+      const resData = await res.json();
+      setLicenses(prev => prev.map(l => l.id === tempId ? (resData.license || newLicense) : l));
       showToast(`Key minted: ${generatedKey}`);
     } catch (err) {
       // Revert on failure
@@ -159,12 +179,25 @@ export default function Dashboard() {
     showToast(`HWID unbind cleared for ${licenseKey}`);
     
     try {
-      const { error } = await supabase
-        .from('licenses')
-        .update({ hwid: null, activated_at: null, expires_at: null })
-        .eq('id', id);
+      const token = await getAuthToken();
+      if (!token) throw new Error('Authentication required.');
 
-      if (error) throw error;
+      const res = await fetch('/api/admin-licenses', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          id,
+          reset_hwid: true
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to reset HWID');
+      }
     } catch (err) {
       // Revert on failure
       setLicenses(previousLicenses);
@@ -181,12 +214,25 @@ export default function Dashboard() {
     showToast(`Key status updated to ${newStatus.toUpperCase()}`);
     
     try {
-      const { error } = await supabase
-        .from('licenses')
-        .update({ status: newStatus })
-        .eq('id', id);
+      const token = await getAuthToken();
+      if (!token) throw new Error('Authentication required.');
 
-      if (error) throw error;
+      const res = await fetch('/api/admin-licenses', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          id,
+          status: newStatus
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to update status');
+      }
     } catch (err) {
       // Revert on failure
       setLicenses(previousLicenses);
@@ -205,12 +251,24 @@ export default function Dashboard() {
     setConfirmDeleteId(null);
     
     try {
-      const { error } = await supabase
-        .from('licenses')
-        .delete()
-        .eq('id', idToDelete);
+      const token = await getAuthToken();
+      if (!token) throw new Error('Authentication required.');
 
-      if (error) throw error;
+      const res = await fetch('/api/admin-licenses', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          id: idToDelete
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to delete license');
+      }
     } catch (err) {
       // Revert on failure
       setLicenses(previousLicenses);
